@@ -1,0 +1,13 @@
+# Secrets — never commit real credentials
+secrets.h
+
+# Server output (received photos)
+photos/
+
+# Python
+__pycache__/
+*.pyc
+
+# Arduino / build artifacts
+build/
+*.bin
