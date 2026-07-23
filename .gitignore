@@ -1,5 +1,6 @@
 # Secrets — never commit real credentials
 secrets.h
+telegram_config.py
 
 # Server output (received photos)
 photos/
