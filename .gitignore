@@ -2,12 +2,24 @@
 secrets.h
 telegram_config.py
 
-# Server output (received photos)
+# Server output (received photos) + runtime data
 photos/
+data/
+gallery/
+*.db
+*.sqlite
 
 # Python
 __pycache__/
 *.pyc
+.venv/
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+
+# Vision models (downloaded on first run)
+*.pt
+*.onnx
 
 # Arduino / build artifacts
 build/

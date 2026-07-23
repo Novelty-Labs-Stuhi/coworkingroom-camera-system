@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stuhi-vision"
+version = "0.1.0"
+description = "Single-camera, face-based occupancy tracking for the stuhi office."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9,<5",  # headless 4.x: truly no libGL/system-GUI deps (opencv 5 wheels still link libGL)
+    "typer>=0.12",
+    "ultralytics>=8.2",   # person detection + ByteTrack tracking
+    "insightface>=0.7",   # face detection, alignment, ArcFace embedding
+    "onnxruntime>=1.17",  # insightface runtime
+    "torch>=2.2",         # body-embedding backbone (same-day exit linking)
+    "torchvision>=0.17",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "pytest>=8.0", "pre-commit>=3.7"]
+server = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]  # the doorway photo-receiver (../server.py)
+
+[project.scripts]
+stuhi-vision = "stuhi_vision.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stuhi_vision"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pyflakes / pycodestyle
+    "I",             # import sorting
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "SIM",           # simplify
+    "C90",           # mccabe complexity
+    "PL",            # pylint (incl. PLR09xx size limits)
+    "RUF",
+]
+ignore = [
+    "PLR2004",  # allow small magic numbers in geometry/thresholds
+    "PLC0415",  # heavy models (torch/insightface/YOLO/cv2) are imported lazily on purpose
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
+
+[tool.ruff.lint.pylint]
+max-args = 7  # the Pipeline composition root wires 7 injected collaborators
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "S101"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
