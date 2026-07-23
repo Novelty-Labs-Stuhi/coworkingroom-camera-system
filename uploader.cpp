@@ -5,7 +5,7 @@
 
 // >>> EDIT THIS ONE LINE <<<  Point it at your Mac's IP and the server port.
 // Find your Mac's IP with:  ipconfig getifaddr en0
-static const char *SERVER_URL = "http://192.168.8.203:8000/upload";
+static const char *SERVER_URL = "http://192.168.8.238:8000/upload";
 
 void sendPhoto(camera_fb_t *frame) {
   if (WiFi.status() != WL_CONNECTED) {
