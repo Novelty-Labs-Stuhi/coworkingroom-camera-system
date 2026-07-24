@@ -3,35 +3,59 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 
-// >>> EDIT THIS ONE LINE <<<  Point it at your Mac's IP and the server port.
-// Find your Mac's IP with:  ipconfig getifaddr en0
+// >>> EDIT THIS ONE LINE <<<  Point it at the server's IP and port.
 // Port 3400 is inside Arsenii's ufw-allowed range (3400-3499) on Mark's PC.
-static const char *SERVER_URL = "http://192.168.8.238:3400/upload";
+static const char *SERVER_URL = "http://192.168.8.238:3400/clip";
 
-void sendPhoto(camera_fb_t *frame) {
+// Write a little-endian uint32 into buf and advance the offset.
+static void putU32LE(uint8_t *buf, size_t &off, uint32_t v) {
+  buf[off++] = v & 0xff;
+  buf[off++] = (v >> 8) & 0xff;
+  buf[off++] = (v >> 16) & 0xff;
+  buf[off++] = (v >> 24) & 0xff;
+}
+
+void sendClip(const Clip &clip) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi not connected, skipping upload");
     return;
   }
-
-  // The camera gives us a raw grayscale frame; encode it to JPEG in software.
-  uint8_t *jpg = nullptr;
-  size_t jpgLen = 0;
-  if (!frame2jpg(frame, 80 /* quality 0-100 */, &jpg, &jpgLen)) {
-    Serial.println("JPEG encode failed");
+  if (clip.count <= 0) {
+    Serial.println("Empty clip, nothing to send");
     return;
+  }
+
+  // One contiguous body: [len][jpeg][len][jpeg]... Build it in PSRAM so we send
+  // the whole clip in a single POST rather than one request per frame.
+  size_t total = 0;
+  for (int i = 0; i < clip.count; i++) total += 4 + clip.len[i];
+
+  uint8_t *body = (uint8_t *)ps_malloc(total);
+  if (!body) {
+    Serial.println("clip body alloc failed (no PSRAM?)");
+    return;
+  }
+
+  size_t off = 0;
+  for (int i = 0; i < clip.count; i++) {
+    putU32LE(body, off, (uint32_t)clip.len[i]);
+    memcpy(body + off, clip.jpeg[i], clip.len[i]);
+    off += clip.len[i];
   }
 
   HTTPClient http;
   http.begin(SERVER_URL);
-  http.addHeader("Content-Type", "image/jpeg");
-  int code = http.POST(jpg, jpgLen);
+  http.addHeader("Content-Type", "application/octet-stream");
+  http.addHeader("X-Frame-Count", String(clip.count));
+  http.addHeader("X-Fps", String(clip.fps));
+  int code = http.POST(body, total);
   if (code > 0) {
-    Serial.printf("Upload HTTP %d (%u bytes)\n", code, (unsigned)jpgLen);
+    Serial.printf("Upload HTTP %d (%d frames, %u bytes)\n", code, clip.count,
+                  (unsigned)total);
   } else {
     Serial.printf("Upload failed: %s\n", http.errorToString(code).c_str());
   }
   http.end();
 
-  free(jpg);  // frame2jpg allocated this buffer; we own it
+  free(body);
 }

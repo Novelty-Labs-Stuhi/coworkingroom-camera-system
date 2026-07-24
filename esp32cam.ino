@@ -5,7 +5,8 @@
 #include "camera.h"    // initCamera()
 #include "netwifi.h"   // connectWiFi()
 #include "motion.h"    // detectMotion()
-#include "uploader.h"  // sendPhoto()
+#include "clip.h"      // recordClip() / freeClip()
+#include "uploader.h"  // sendClip()
 
 // Don't send more often than this, even if motion keeps going (milliseconds).
 static const unsigned long COOLDOWN_MS = 10000;  // 10 seconds
@@ -34,16 +35,23 @@ void loop() {
   }
 
   // Ask the motion module whether this frame differs enough from the last one.
-  if (detectMotion(frame)) {
+  bool motion = detectMotion(frame);
+
+  // Return this frame before recording: recordClip() grabs its own frames, and
+  // holding this one would starve the driver's 2-frame buffer pool.
+  esp_camera_fb_return(frame);
+
+  if (motion) {
     unsigned long now = millis();
     if (now - lastSend > COOLDOWN_MS) {
-      Serial.println("Motion detected -> sending photo");
-      sendPhoto(frame);
-      lastSend = now;
+      Serial.println("Motion detected -> recording clip");
+      Clip clip;
+      recordClip(clip);
+      sendClip(clip);
+      freeClip(clip);
+      lastSend = millis();  // start cooldown after the (multi-second) send
     }
   }
 
-  // Give the frame buffer back to the driver, then pace the loop (~10 fps).
-  esp_camera_fb_return(frame);
-  delay(100);
+  delay(100);  // pace the idle watch loop (~10 fps)
 }

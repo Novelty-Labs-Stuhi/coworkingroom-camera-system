@@ -1,5 +1,7 @@
 #pragma once
-#include "esp_camera.h"
+#include "clip.h"
 
-// Encode the frame to JPEG and HTTP-POST it to the server endpoint.
-void sendPhoto(camera_fb_t *frame);
+// HTTP-POST a recorded clip to the server. The body is a length-prefixed
+// stream of JPEG frames: for each frame, a little-endian uint32 length
+// followed by that many JPEG bytes. The server stitches them into a video.
+void sendClip(const Clip &clip);
