@@ -1,54 +1,33 @@
-"""Doorway clip receiver: stitch a motion clip, identify who is there, forward to Telegram.
+"""Doorway clip receiver: stitch a motion clip and forward it to Telegram.
 
 The ESP32 records a ~1.5 s burst of frames whenever it detects motion and POSTs them
 to ``/clip`` as one length-prefixed binary stream (per frame: a little-endian uint32
-length, then that many JPEG bytes). We stitch the frames into an MP4, detect the person
-and recognise their face against the enrolled gallery on the sharpest frame, log the
-sighting, and forward the video to Telegram with a caption naming who was seen.
-``GET /sightings`` returns the recent log.
+length, then that many JPEG bytes). We encode the frames into an H.264 MP4 with ffmpeg
+and forward the video to Telegram.
 
 Run it (on the machine the camera uploads to). Port 3400 matches the camera's upload
 target in uploader.cpp -- it is in the firewall's allowed range:
-    pip install -e vision[server]                 # vision engine + FastAPI/uvicorn/httpx
+    pip install fastapi uvicorn httpx
+    sudo apt-get install -y ffmpeg          # the encoder
     uvicorn server:app --host 0.0.0.0 --port 3400
 
-Enrol the people you want named first:
-    python -m stuhi_vision enroll "Ilari" faces/ilari_*.jpg   # writes ./gallery/
-
 Telegram is optional: copy telegram_config.example.py -> telegram_config.py. If it is
-missing, clips are still saved and identified; they just are not sent.
-
-The camera sends single-direction, motion-triggered grayscale clips (not a continuous
-stream), so this is a doorway identification log: who was seen, and when.
+missing, clips are still saved to ./clips/; they just are not sent.
 """
 
 from __future__ import annotations
 
-import os
+import shutil
 import struct
-import sys
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
-# Make the vision engine importable whether or not it was pip-installed.
-sys.path.insert(0, str(Path(__file__).parent / "vision" / "src"))
-
-import cv2
 import httpx
-import numpy as np
 from fastapi import FastAPI, Request
-
-from stuhi_vision.detection import PersonDetector
-from stuhi_vision.photo_ingest import PhotoIdentifier
-from stuhi_vision.recognition.face import FaceRecognizer
-from stuhi_vision.recognition.gallery import FaceGallery
-from stuhi_vision.store import SightingStore
 
 _ROOT = Path(__file__).parent
 _CLIP_DIR = _ROOT / "clips"
-_GALLERY_DIR = _ROOT / "gallery"
-_DATABASE = _ROOT / "data" / "sightings.db"
-_FACE_MATCH = float(os.environ.get("STUHI_FACE_MATCH", "0.35"))
 _DEFAULT_FPS = 10  # fallback when the camera doesn't send an X-Fps header
 
 _CLIP_DIR.mkdir(exist_ok=True)
@@ -60,19 +39,9 @@ try:
     TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 except ImportError:
     TELEGRAM_ENABLED = False
-    print("telegram_config.py not found -- clips will be saved/identified but NOT sent")
+    print("telegram_config.py not found -- clips will be saved but NOT sent")
 
 app = FastAPI(title="stuhi doorway camera")
-
-_identifier = PhotoIdentifier(
-    PersonDetector(),
-    FaceRecognizer(FaceGallery.load(_GALLERY_DIR), _FACE_MATCH),
-)
-_store = SightingStore(_DATABASE)
-
-
-def _describe(seen: list[str]) -> str:
-    return "seen: " + ", ".join(seen) if seen else "motion (no person recognised)"
 
 
 def _split_frames(body: bytes) -> list[bytes]:
@@ -89,35 +58,26 @@ def _split_frames(body: bytes) -> list[bytes]:
     return frames
 
 
-def _decode(frames: list[bytes]) -> list[np.ndarray]:
-    """Decode JPEG frames to BGR images, dropping any that fail to decode."""
-    images = []
-    for jpg in frames:
-        img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
-        if img is not None:
-            images.append(img)
-    return images
+def _encode_mp4(frames: list[bytes], fps: int, path: Path) -> bool:
+    """Encode concatenated JPEG frames into an H.264 MP4 via ffmpeg.
 
-
-def _sharpest(images: list[np.ndarray]) -> np.ndarray:
-    """Pick the least-blurry frame (highest Laplacian variance) for recognition."""
-    return max(images, key=lambda im: cv2.Laplacian(im, cv2.CV_64F).var())
-
-
-def _write_mp4(images: list[np.ndarray], path: Path, fps: int) -> bool:
-    """Stitch frames into an MP4. Returns False if the writer couldn't open."""
-    height, width = images[0].shape[:2]
-    writer = cv2.VideoWriter(
-        str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-    )
-    if not writer.isOpened():
+    H.264 + yuv420p + faststart is what Telegram actually plays inline as a video;
+    the older mp4v/MPEG-4 output only shows up as a static thumbnail.
+    """
+    if not shutil.which("ffmpeg"):
+        print("  -> ffmpeg not found; install it: sudo apt-get install -y ffmpeg")
         return False
-    for img in images:
-        # VideoWriter needs every frame the same size as the first.
-        if img.shape[:2] != (height, width):
-            img = cv2.resize(img, (width, height))
-        writer.write(img)
-    writer.release()
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "image2pipe", "-vcodec", "mjpeg", "-framerate", str(fps), "-i", "pipe:0",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(path),
+    ]
+    proc = subprocess.run(cmd, input=b"".join(frames), capture_output=True)
+    if proc.returncode != 0:
+        print(f"  -> ffmpeg failed: {proc.stderr.decode(errors='replace')[-500:]}")
+        return False
     return True
 
 
@@ -147,10 +107,9 @@ async def clip(request: Request) -> dict:
     now = datetime.now()
 
     frames = _split_frames(body)
-    images = _decode(frames)
-    if not images:
-        print(f"Received clip with no decodable frames ({len(body)} bytes)")
-        return {"status": "error", "reason": "no decodable frames"}
+    if not frames:
+        print(f"Received clip with no frames ({len(body)} bytes)")
+        return {"status": "error", "reason": "no frames"}
 
     try:
         fps = int(request.headers.get("x-fps", _DEFAULT_FPS))
@@ -159,38 +118,12 @@ async def clip(request: Request) -> dict:
     fps = max(1, min(fps, 30))
 
     path = _CLIP_DIR / f"{now:%Y-%m-%d_%H-%M-%S}.mp4"
-    if not _write_mp4(images, path, fps):
-        print("VideoWriter failed to open (no mp4v codec?)")
+    if not _encode_mp4(frames, fps, path):
         return {"status": "error", "reason": "video encode failed"}
 
-    # Identify on the sharpest frame -- one recognition pass, best chance of a face.
-    seen: list[str] = []
-    for sighting in _identifier.identify(_sharpest(images)):
-        _store.record(now.timestamp(), sighting.name, sighting.clarity)
-        seen.append(sighting.name)
-
-    print(f"Saved {path.name} ({len(images)} frames @ {fps} fps) -> {_describe(seen)}")
+    print(f"Saved {path.name} ({len(frames)} frames @ {fps} fps)")
 
     if TELEGRAM_ENABLED:
-        await send_video_to_telegram(path.read_bytes(), f"{path.name} - {_describe(seen)}")
+        await send_video_to_telegram(path.read_bytes(), f"motion - {path.name}")
 
-    return {
-        "status": "ok",
-        "frames": len(images),
-        "fps": fps,
-        "file": path.name,
-        "seen": seen,
-    }
-
-
-@app.get("/sightings")
-def sightings(limit: int = 50) -> dict:
-    recent = [
-        {
-            "time": datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
-            "name": name,
-            "clarity": round(clarity, 3),
-        }
-        for ts, name, clarity in _store.recent(limit)
-    ]
-    return {"count": len(recent), "recent": recent}
+    return {"status": "ok", "frames": len(frames), "fps": fps, "file": path.name}
