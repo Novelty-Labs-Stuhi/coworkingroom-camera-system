@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "stuhi-vision"
 version = "0.1.0"
 description = "Single-camera, face-based occupancy tracking for the stuhi office."
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",

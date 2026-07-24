@@ -2,7 +2,8 @@
 secrets.h
 telegram_config.py
 
-# Server output (received photos) + runtime data
+# Server output (received clips/photos) + runtime data
+clips/
 photos/
 data/
 gallery/
