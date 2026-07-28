@@ -26,9 +26,14 @@ RegionBuilder = Callable[[int, int], Region]
 
 
 class Detector(Protocol):
-    """Anything that turns a frame into tracked people."""
+    """Anything that turns a frame into tracked people.
 
-    def update(self, frame: Frame) -> list[TrackedPerson]: ...
+    ``None`` means *this frame was not examined* -- distinct from an empty list, which
+    means it was examined and held nobody. Consumers keep per-track state, so conflating
+    the two makes a skipped frame look like everyone leaving at once.
+    """
+
+    def update(self, frame: Frame) -> list[TrackedPerson] | None: ...
 
 
 class PersonTracker:
@@ -99,9 +104,9 @@ class GatedTracker:
         self._region_builder = region_builder
         self._region: Region | None = None
 
-    def update(self, frame: Frame) -> list[TrackedPerson]:
+    def update(self, frame: Frame) -> list[TrackedPerson] | None:
         if self._gate is not None and not self._gate.is_active(frame.image):
-            return []
+            return None  # not examined -- see Detector: this is not the same as "nobody"
         region = self._ensure_region(frame)
         if region is None:
             return self._tracker.update(frame)

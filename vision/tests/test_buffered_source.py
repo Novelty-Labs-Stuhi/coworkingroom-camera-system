@@ -16,7 +16,6 @@ def _frames(count: int) -> list[Frame]:
 def test_every_frame_arrives_in_order_when_the_consumer_keeps_up() -> None:
     source = BufferedSource(_frames(50), capacity=64)
     assert [frame.timestamp for frame in source] == [float(i) for i in range(50)]
-    assert source.dropped == 0
 
 
 def test_a_finite_source_terminates_the_iteration() -> None:
@@ -32,14 +31,14 @@ def test_a_slow_consumer_still_receives_frames_produced_while_it_worked() -> Non
     assert len(received) == 20
 
 
-def test_overflow_drops_the_oldest_and_keeps_going() -> None:
-    # Capacity smaller than the source, consumed only after production finishes.
+def test_a_small_buffer_loses_nothing_because_the_reader_waits() -> None:
+    # Dropping frames breaks ByteTrack: it associates detections between *consecutive*
+    # frames, so a gap makes it report nobody at all. Completeness beats freshness here.
     source = BufferedSource(_frames(100), capacity=4)
     received = [frame.timestamp for frame in source]
 
-    assert len(received) <= 100
-    assert received == sorted(received)  # order is never scrambled
-    assert source.dropped == 100 - len(received)
+    assert received == [float(i) for i in range(100)]
+    assert source.high_water <= 4
 
 
 def test_capacity_must_be_positive() -> None:

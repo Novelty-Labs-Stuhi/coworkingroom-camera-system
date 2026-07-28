@@ -51,6 +51,14 @@ class Pipeline:
     def run(self) -> None:
         for frame_index, frame in enumerate(self._source):
             people = self._tracker.update(frame)
+            if people is None:
+                # The frame was never examined (motion gate). Touch no per-track state:
+                # telling the doorway "nobody is here" would make it forget which side
+                # everyone was on, and a crossing spanning an idle frame would be lost.
+                if self._on_frame is not None:
+                    self._on_frame(frame, [], [])
+                continue
+
             self._sessions.observe(frame, people, frame_index)
             crossings = self._doorway.update(people, frame)
             for crossing in crossings:

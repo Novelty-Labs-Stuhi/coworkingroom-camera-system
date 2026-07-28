@@ -42,7 +42,9 @@ def test_a_still_frame_never_reaches_the_model() -> None:
     gated.update(_frame())  # first frame is always active
     calls_after_first = len(tracker.calls)
     for _ in range(3):
-        assert gated.update(_frame()) == []
+        # None, not [] -- an empty list would tell the doorway monitor that everyone
+        # left, making it forget which side each track was on.
+        assert gated.update(_frame()) is None
 
     assert len(tracker.calls) == calls_after_first  # the model was not called again
 

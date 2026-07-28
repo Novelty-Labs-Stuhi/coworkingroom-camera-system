@@ -23,23 +23,31 @@ def _side(a: Point, b: Point, p: Point) -> float:
     return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
 
 
-def _within_segment(a: Point, b: Point, p: Point) -> bool:
-    """True when ``p`` projects onto the segment ``a..b`` (not its infinite extension)."""
+def _within_segment(a: Point, b: Point, p: Point, tolerance: float = 0.0) -> bool:
+    """True when ``p`` projects onto the segment ``a..b`` (not its infinite extension).
+
+    ``tolerance`` extends the segment by that fraction of its length at each end. A camera
+    that gets knocked slightly shifts every pixel coordinate, and a hairline segment would
+    then reject crossings just past its end -- the count would quietly go wrong rather
+    than visibly break. The slack absorbs small movement; a large shift or a rotation
+    still needs the line redrawn, which no amount of tolerance can substitute for.
+    """
     dx, dy = b[0] - a[0], b[1] - a[1]
     length_sq = dx * dx + dy * dy
     if length_sq == 0:
         return False
     t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length_sq
-    return 0.0 <= t <= 1.0
+    return -tolerance <= t <= 1.0 + tolerance
 
 
 class DoorwayMonitor:
     """Stateful line-crossing detector, one instance per doorway."""
 
-    def __init__(self, config: DoorwayConfig) -> None:
+    def __init__(self, config: DoorwayConfig, span_tolerance: float = 0.25) -> None:
         self._a = config.line_a
         self._b = config.line_b
         self._inside_positive = self._resolve_inside_sign(config)
+        self._span_tolerance = span_tolerance
         self._last_side: dict[int, float] = {}
 
     def _resolve_inside_sign(self, config: DoorwayConfig) -> bool:
@@ -65,7 +73,9 @@ class DoorwayMonitor:
             side = _side(self._a, self._b, foot)
             previous = self._last_side.get(person.track_id)
             self._last_side[person.track_id] = side
-            if previous is None or not _within_segment(self._a, self._b, foot):
+            if previous is None or not _within_segment(
+                self._a, self._b, foot, self._span_tolerance
+            ):
                 continue
             direction = self._direction(previous, side)
             if direction is not None:

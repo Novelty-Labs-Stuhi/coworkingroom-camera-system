@@ -6,7 +6,7 @@ import numpy as np
 
 from stuhi_vision.config import DoorwayConfig
 from stuhi_vision.domain import Box, Direction, Frame, TrackedPerson
-from stuhi_vision.doorway import DoorwayMonitor
+from stuhi_vision.doorway import DoorwayMonitor, _within_segment
 
 
 def _frame() -> Frame:
@@ -48,3 +48,14 @@ def test_no_crossing_when_staying_on_one_side() -> None:
     monitor = _monitor()
     monitor.update([_person(1, foot_y=90)], _frame())
     assert monitor.update([_person(1, foot_y=80)], _frame()) == []
+
+
+def test_span_tolerance_absorbs_a_nudged_camera() -> None:
+    # A knocked camera shifts every pixel coordinate. Without slack, a crossing just past
+    # the segment's end is rejected and the count goes quietly wrong instead of failing.
+    a, b = (300.0, 0.0), (300.0, 480.0)
+
+    assert _within_segment(a, b, (300.0, 500.0)) is False  # hairline segment
+    assert _within_segment(a, b, (300.0, 500.0), tolerance=0.25) is True
+    # Far outside is still rejected: slack is not a substitute for redrawing the line.
+    assert _within_segment(a, b, (300.0, 900.0), tolerance=0.25) is False
