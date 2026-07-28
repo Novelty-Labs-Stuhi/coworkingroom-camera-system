@@ -189,8 +189,14 @@ def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce)
     """File a completed sighting with its clip, notify the chat, then hand it on."""
 
     def publish(publication: Publication) -> None:
+        # position and burst have to reach the record, or a group cannot be labelled by
+        # crossing order later -- the review queue would see each sighting as standalone.
         sighting_id = review.record(
-            publication.sighting, encode_jpeg=encode_jpeg, clip=publication.clip
+            publication.sighting,
+            encode_jpeg=encode_jpeg,
+            clip=publication.clip,
+            position=publication.position,
+            burst=publication.burst,
         )
         if notifier is not None:
             notifier.announce(
