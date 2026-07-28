@@ -71,6 +71,15 @@ class TelegramNotifier:
         except Exception as exc:
             print(f"  -> telegram send failed: {exc}")
 
+    def send_test(self, text: str) -> None:
+        """Send one message, letting errors surface -- used to verify the credentials."""
+        response = self._client.post(
+            _API.format(token=self._token, method="sendMessage"),
+            data={"chat_id": self._chat_id, "text": text},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"telegram rejected the request: {response.text}")
+
     def _send_photo(self, path: Path, caption: str) -> None:
         self._client.post(
             _API.format(token=self._token, method="sendPhoto"),

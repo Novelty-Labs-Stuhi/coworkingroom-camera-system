@@ -127,6 +127,36 @@ def enroll(
     typer.echo(f"enrolled {added} face(s) for {name!r}; gallery now: {gallery.names}")
 
 
+@app.command("telegram-check")
+def telegram_check(config_path: ConfigOption = Path("config.toml")) -> None:
+    """Verify the Telegram bot: send a test message and report what it can see.
+
+    Run this after setting TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. It confirms the
+    credentials reach Telegram before the pipeline depends on them.
+    """
+    from .notify import TelegramNotifier
+    from .review import ReviewQueue
+
+    cfg = config.load(config_path)
+    if not cfg.telegram.enabled:
+        typer.echo("not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+        raise typer.Exit(code=1)
+
+    gallery = FaceGallery.load(cfg.paths.gallery_dir)
+    review = ReviewQueue(cfg.paths.review_dir, gallery, cfg.paths.gallery_dir)
+    notifier = TelegramNotifier(cfg.telegram.bot_token, cfg.telegram.chat_id, review)
+    try:
+        pending = review.pending()
+        notifier.send_test(
+            f"stuhi-vision connected. enrolled: {gallery.names or 'nobody yet'}; "
+            f"{len(pending)} sighting(s) awaiting a label."
+        )
+    finally:
+        notifier.stop()
+    typer.echo(f"sent a test message to chat {cfg.telegram.chat_id}")
+    typer.echo(f"enrolled: {gallery.counts() or '(empty gallery)'}")
+
+
 @app.command()
 def occupancy(config_path: ConfigOption = Path("config.toml")) -> None:
     """Print who is currently inside, reconstructed from the event log."""
