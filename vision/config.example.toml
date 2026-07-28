@@ -22,8 +22,14 @@ face_match = 0.35       # minimum cosine similarity to accept a face as a known 
 face_margin = 0.05      # best name must beat the runner-up by this, else "unknown"
 exit_similarity = 0.6   # minimum cosine similarity to link an exit to an occupant
 exit_margin = 0.05      # winner must beat the runner-up by this, else exit is ambiguous
-min_track_age = 3       # frames a track must exist before its crossing counts (anti-flicker)
+min_track_age = 2       # frames a track must exist before its crossing counts (anti-flicker)
+
+[performance]
+# YOLO inference resolution. 640 costs ~440 ms/frame on a CPU without AVX2 against
+# ~200 ms at 320, and a doorway sees people close up. Raise only if people are missed.
+detect_imgsz = 320
 
 [paths]
 gallery_dir = "gallery"
 database = "data/occupancy.db"
+review_dir = "data/review"

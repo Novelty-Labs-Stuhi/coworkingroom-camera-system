@@ -18,6 +18,8 @@ from ..domain import Box
 from .embeddings import Match, normalize
 from .gallery import FaceGallery
 
+_DET_SIZE = (480, 480)  # detector input; smaller is faster and enough for close faces
+
 
 @dataclass(frozen=True, slots=True)
 class FaceObservation:
@@ -42,8 +44,15 @@ class FaceRecognizer:
 
             providers = onnxruntime.get_available_providers()
             use_gpu = "CUDAExecutionProvider" in providers
-            app = FaceAnalysis(name="buffalo_l", providers=providers)
-            app.prepare(ctx_id=0 if use_gpu else -1, det_size=(640, 640))
+            # Only detection and recognition. The buffalo_l bundle also ships 3D
+            # landmarks (137 MB), 2D landmarks and gender/age, and FaceAnalysis.get()
+            # runs every enabled model on every face -- pure cost for identity work.
+            app = FaceAnalysis(
+                name="buffalo_l",
+                providers=providers,
+                allowed_modules=["detection", "recognition"],
+            )
+            app.prepare(ctx_id=0 if use_gpu else -1, det_size=_DET_SIZE)
             self._app = app
         return self._app
 

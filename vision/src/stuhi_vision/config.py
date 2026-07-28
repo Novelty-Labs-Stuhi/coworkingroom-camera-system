@@ -37,7 +37,21 @@ class Thresholds:
     face_margin: float = 0.05  # best name must beat the runner-up by this, else unknown
     exit_similarity: float = 0.6  # min cosine to link an exit to an occupant
     exit_margin: float = 0.05  # best occupant must beat the runner-up by this, else ambiguous
-    min_track_age: int = 3  # frames a track must exist before its crossing counts (anti-flicker)
+    # Frames a track must exist before its crossing counts (anti-flicker). This is a
+    # count, so it is really a *duration* divided by the frame rate: at ~2 fps a person
+    # crossing in a second is seen once or twice, and a gate of 3 would reject everyone.
+    # Keep it just high enough to reject single-frame noise, and raise it if the rate
+    # improves.
+    min_track_age: int = 2
+
+
+@dataclass(frozen=True, slots=True)
+class Performance:
+    """Inference cost knobs. Measured, not guessed -- see docs/design.md."""
+
+    # YOLO inference resolution: 640 costs ~440 ms/frame on a CPU without AVX2, 320
+    # costs ~200 ms. A doorway sees people close up, so 320 is the sensible default.
+    detect_imgsz: int = 320
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +85,7 @@ class Config:
     source: SourceConfig
     doorway: DoorwayConfig
     thresholds: Thresholds = field(default_factory=Thresholds)
+    performance: Performance = field(default_factory=Performance)
     paths: Paths = field(default_factory=Paths)
     telegram: Telegram = field(default_factory=Telegram.from_env)
 
@@ -92,10 +107,17 @@ def load(path: str | Path) -> Config:
         inside_side=door["inside_side"],
     )
     thresholds = Thresholds(**data.get("thresholds", {}))
+    performance = Performance(**data.get("performance", {}))
     paths_raw = data.get("paths", {})
     paths = Paths(
         gallery_dir=Path(paths_raw.get("gallery_dir", "gallery")),
         database=Path(paths_raw.get("database", "data/occupancy.db")),
         review_dir=Path(paths_raw.get("review_dir", "data/review")),
     )
-    return Config(source=source, doorway=doorway, thresholds=thresholds, paths=paths)
+    return Config(
+        source=source,
+        doorway=doorway,
+        thresholds=thresholds,
+        performance=performance,
+        paths=paths,
+    )

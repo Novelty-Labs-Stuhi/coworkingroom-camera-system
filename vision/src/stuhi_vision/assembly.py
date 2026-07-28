@@ -61,7 +61,10 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
 
     pipeline = Pipeline(
         source=open_source(config.source),
-        tracker=PersonTracker(detection_conf=thresholds.detection_conf),
+        tracker=PersonTracker(
+            detection_conf=thresholds.detection_conf,
+            imgsz=config.performance.detect_imgsz,
+        ),
         doorway=DoorwayMonitor(config.doorway),
         sessions=sessions,
         doorkeeper=doorkeeper,
