@@ -10,6 +10,7 @@ The gallery grows at runtime: a face nobody recognised is enrolled by labelling 
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -18,10 +19,17 @@ from .embeddings import Match, nearest, rank
 
 
 class FaceGallery:
-    """A mutable, disk-backed collection of labelled face embeddings."""
+    """A mutable, disk-backed collection of labelled face embeddings.
+
+    Labels arrive from outside the pipeline -- the Telegram poll thread and the web UI --
+    while the pipeline is reading the gallery to recognise faces. Every access therefore
+    takes a lock: mutating a name's list while ``rank`` iterates it would raise, or worse,
+    silently compare against a half-updated set.
+    """
 
     def __init__(self, references: dict[str, list[np.ndarray]] | None = None) -> None:
         self._references: dict[str, list[np.ndarray]] = references or {}
+        self._lock = threading.RLock()
 
     @classmethod
     def load(cls, directory: Path) -> FaceGallery:

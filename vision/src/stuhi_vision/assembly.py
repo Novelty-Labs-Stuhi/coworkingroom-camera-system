@@ -107,7 +107,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         doorway=DoorwayMonitor(config.doorway),
         sessions=sessions,
         doorkeeper=doorkeeper,
-        announce=publisher.hold,
+        announce=_directional(config.doorway.announce, publisher, announce),
         on_frame=_frame_hook(publisher, observer),
     )
     return Application(
@@ -141,6 +141,25 @@ def _recorded(source, recorder: ClipRecorder):
             yield frame
 
     return frames()
+
+
+def _directional(reported: str, publisher: SightingPublisher, announce):
+    """Film and announce only the crossings this camera sees faces for.
+
+    The filter belongs *here*, before the clip is opened -- not downstream of publishing.
+    Every passage is seen by both cameras, so filtering after the fact would still cut,
+    encode and send a second video showing the back of someone's head.
+    """
+    if reported == "both":
+        return publisher.hold
+
+    def hold(sighting: Sighting) -> None:
+        if sighting.direction.value == reported:
+            publisher.hold(sighting)
+        else:
+            announce(sighting)  # counted and logged, but not filmed or sent
+
+    return hold
 
 
 def _frame_hook(publisher: SightingPublisher, observer: FrameObserver | None):

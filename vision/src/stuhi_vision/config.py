@@ -15,6 +15,7 @@ from typing import Literal
 
 Point = tuple[float, float]
 Side = Literal["left", "right"]
+Reported = Literal["in", "out", "both"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,13 @@ class DoorwayConfig:
     line_a: Point  # one end of the threshold line, in pixels
     line_b: Point  # the other end
     inside_side: Side  # which side of the line is "inside the office"
+    # Which crossings this camera films and announces. A camera only sees faces in one
+    # direction; in the other it films the back of someone's head, which cannot be judged
+    # or labelled -- and with a camera on each side of the door, every passage is seen
+    # twice, so announcing both directions from both cameras means two messages per person.
+    # Crossings in the unreported direction are still counted and written to the ledger;
+    # only the clip and the chat message are suppressed.
+    announce: Reported = "both"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +140,7 @@ def load(path: str | Path) -> Config:
         line_a=_point(door["line_a"]),
         line_b=_point(door["line_b"]),
         inside_side=door["inside_side"],
+        announce=door.get("announce", "both"),
     )
     thresholds = Thresholds(**data.get("thresholds", {}))
     performance = Performance(**data.get("performance", {}))
