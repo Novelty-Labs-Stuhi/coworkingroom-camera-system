@@ -57,7 +57,11 @@ function buildCard(record) {
   article.dataset.id = record.id;
 
   const video = card.querySelector('video');
+  video.poster = `/media/${record.id}.jpg`;
   video.src = `/media/${record.id}.mp4`;
+  // Autoplay can still be refused (data saver, reduced motion); play() keeps it trying and
+  // a refusal is harmless, since the poster and controls are already there.
+  video.play().catch(() => {});
   // Fall back to the saved face crop when a clip could not be encoded.
   video.addEventListener('error', () => {
     const image = document.createElement('img');

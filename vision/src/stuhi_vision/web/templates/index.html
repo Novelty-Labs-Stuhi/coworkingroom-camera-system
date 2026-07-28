@@ -36,7 +36,9 @@
 
   <template id="card-template">
     <article class="card">
-      <video controls muted loop preload="metadata"></video>
+      <!-- autoplay+muted+playsinline so a clip is visible without a click; the poster is
+           the saved face crop, so something recognisable shows before the video decodes. -->
+      <video controls muted loop autoplay playsinline preload="auto"></video>
       <div class="meta">
         <span class="direction"></span>
         <span class="score"></span>
