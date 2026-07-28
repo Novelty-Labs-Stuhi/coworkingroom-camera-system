@@ -21,6 +21,10 @@ Side = Literal["left", "right"]
 class SourceConfig:
     kind: Literal["file", "webcam", "stream"]
     target: str  # file path, webcam index, or stream URL
+    # Degrees to rotate every frame so it is upright: 0, 90, 180 or 270. Detection and
+    # face recognition both fail outright on an inverted image, so a camera mounted the
+    # wrong way up must be corrected before anything looks at it.
+    rotate: int = 0
 
 
 @dataclass(frozen=True, slots=True)

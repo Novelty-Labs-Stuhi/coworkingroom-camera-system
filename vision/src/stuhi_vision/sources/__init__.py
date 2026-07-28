@@ -9,12 +9,17 @@ from __future__ import annotations
 from ..config import SourceConfig
 from .base import FrameSource
 from .buffered import BufferedSource
+from .oriented import OrientedSource
 from .stream import NetworkStreamSource
 from .video import VideoFileSource, WebcamSource
 
 
 def open_source(config: SourceConfig) -> FrameSource:
-    """Build the frame source described by ``config``."""
+    """Build the frame source described by ``config``, corrected to upright."""
+    return OrientedSource(_raw_source(config), config.rotate)
+
+
+def _raw_source(config: SourceConfig) -> FrameSource:
     if config.kind == "file":
         return VideoFileSource(config.target)
     if config.kind == "webcam":
@@ -28,6 +33,7 @@ __all__ = [
     "BufferedSource",
     "FrameSource",
     "NetworkStreamSource",
+    "OrientedSource",
     "VideoFileSource",
     "WebcamSource",
     "open_source",
