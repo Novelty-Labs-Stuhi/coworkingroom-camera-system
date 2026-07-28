@@ -119,3 +119,63 @@ def test_correcting_a_label_is_reported_as_a_correction(tmp_path) -> None:
     queue.label(sighting_id, "ilari")
     assert queue.label(sighting_id, "mark") is LabelOutcome.CORRECTED
     assert gallery.counts() == {"mark": 1}
+
+
+def test_rejecting_a_sighting_removes_its_reference(tmp_path) -> None:
+    # A back-of-head capture must stop being offered *and* stop dragging the person's
+    # average; hiding the card while leaving the reference would degrade matches invisibly.
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+    queue.label(sighting_id, "ilari")
+
+    assert queue.dismiss(sighting_id) is LabelOutcome.DISMISSED
+    assert gallery.counts() == {}
+    assert queue.pending() == []
+
+
+def test_rejecting_an_unlabelled_sighting_just_hides_it(tmp_path) -> None:
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+
+    assert queue.dismiss(sighting_id) is LabelOutcome.DISMISSED
+    assert queue.pending() == []
+    assert gallery.counts() == {}
+
+
+def test_a_rejected_sighting_stays_rejected_after_a_restart(tmp_path) -> None:
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+    queue.dismiss(sighting_id)
+
+    reopened = ReviewQueue(tmp_path / "review", gallery, tmp_path / "gallery")
+    assert reopened.pending() == []
+
+
+def test_references_tie_enrolled_faces_back_to_their_sightings(tmp_path) -> None:
+    queue, _ = _queue(tmp_path)
+    first = queue.record(_sighting())
+    second = queue.record(_sighting(embedding=np.array([0.0, 1.0, 0.0])))
+    queue.label(first, "ilari")
+    queue.label(second, "mark")
+
+    references = {r.sighting_id: r.name for r in queue.references()}
+
+    assert references == {first: "ilari", second: "mark"}
+
+
+def test_rejected_faces_are_left_out_of_the_audit(tmp_path) -> None:
+    queue, _ = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+    queue.label(sighting_id, "ilari")
+    queue.dismiss(sighting_id)
+
+    assert queue.references() == []
+
+
+def test_group_sizes_count_everyone_who_crossed_together(tmp_path) -> None:
+    queue, _ = _queue(tmp_path)
+    queue.record(_sighting(), position=1, burst=4)
+    queue.record(_sighting(), position=2, burst=4)
+    queue.record(_sighting(), position=1, burst=5)
+
+    assert queue.group_sizes() == {4: 2, 5: 1}

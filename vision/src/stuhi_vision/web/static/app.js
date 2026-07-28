@@ -2,6 +2,7 @@ const MESSAGES = {
   enrolled: ['ok', 'Enrolled.'],
   corrected: ['ok', 'Corrected.'],
   unchanged: ['same', 'Already that name — nothing added.'],
+  dismissed: ['same', 'Rejected — removed from the gallery.'],
 };
 
 async function loadSightings() {
@@ -14,6 +15,36 @@ async function loadSightings() {
   renderCards('labelled', data.labelled);
   document.getElementById('pending-count').textContent =
     data.pending.length ? `(${data.pending.length})` : '';
+  await loadAudit();
+}
+
+// The audit is a separate call because it reads every enrolled embedding off disk, which
+// is far heavier than listing records -- no reason to pay for it on every poll of the list.
+async function loadAudit() {
+  const response = await fetch('/api/audit');
+  if (!response.ok) return;
+  const data = await response.json();
+  renderCards('suspects', data.suspects);
+  document.getElementById('suspects-count').textContent =
+    data.suspects.length ? `(${data.suspects.length})` : '';
+  renderThin(data.thin);
+}
+
+function renderThin(thin) {
+  const names = Object.keys(thin);
+  const list = document.getElementById('thin');
+  list.replaceChildren(
+    ...names.map((name) => {
+      const item = document.createElement('li');
+      const label = document.createElement('b');
+      label.textContent = name;
+      const count = document.createElement('span');
+      count.textContent = ` ${thin[name]} face${thin[name] === 1 ? '' : 's'}`;
+      item.append(label, count);
+      return item;
+    })
+  );
+  document.getElementById('thin-empty').hidden = names.length > 0;
 }
 
 function renderPeople(people) {
@@ -86,6 +117,19 @@ function updateCard(article, record) {
     record.outcome === 'unidentified' ? 'no face seen' : `score ${record.score}`;
   setCurrent(article.querySelector('.current'), record);
 
+  // A group label was assigned by crossing order, so say so -- it is the case most likely
+  // to carry the right names on the wrong people.
+  const group = article.querySelector('.group');
+  const grouped = record.group_size > 1;
+  group.hidden = !grouped;
+  if (grouped) group.textContent = `${record.position} of ${record.group_size} together`;
+
+  const why = article.querySelector('.why');
+  why.hidden = !record.reason;
+  if (record.reason) {
+    why.textContent = `${record.reason} — ${record.similarity} against ${record.average} average`;
+  }
+
   const input = article.querySelector('.name');
   // Never overwrite what someone is in the middle of typing.
   if (record.labelled_as && document.activeElement !== input) input.value = record.labelled_as;
@@ -125,24 +169,27 @@ function buildCard(record) {
   const input = fragment.querySelector('.name');
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    submitLabel(article, input.value);
+    send(article, '/api/label', { sighting_id: article.dataset.id, name: input.value });
+  });
+  fragment.querySelector('.reject').addEventListener('click', () => {
+    send(article, '/api/dismiss', { sighting_id: article.dataset.id });
   });
 
   return article;
 }
 
-async function submitLabel(article, name) {
+async function send(article, url, payload) {
   const result = article.querySelector('.result');
-  const button = article.querySelector('button');
-  button.disabled = true;
+  const buttons = [...article.querySelectorAll('button')];
+  buttons.forEach((button) => (button.disabled = true));
   result.className = 'result';
   result.textContent = 'saving…';
 
   try {
-    const response = await fetch('/api/label', {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sighting_id: article.dataset.id, name }),
+      body: JSON.stringify(payload),
     });
     const body = await response.json();
     if (!response.ok) {
@@ -160,7 +207,7 @@ async function submitLabel(article, name) {
     result.className = 'result bad';
     result.textContent = String(error);
   } finally {
-    button.disabled = false;
+    buttons.forEach((button) => (button.disabled = false));
   }
 }
 

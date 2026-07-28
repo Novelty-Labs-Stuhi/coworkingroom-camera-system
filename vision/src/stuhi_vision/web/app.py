@@ -34,7 +34,12 @@ class LabelRequest(BaseModel):
     name: str
 
 
-def _as_dict(record) -> dict:
+class DismissRequest(BaseModel):
+    sighting_id: str
+
+
+def _as_dict(record, groups: dict[int, int] | None = None) -> dict:
+    size = (groups or {}).get(record.burst, 1)
     return {
         "id": record.sighting_id,
         "direction": record.direction,
@@ -42,19 +47,50 @@ def _as_dict(record) -> dict:
         "score": record.score,
         "name": record.display_name,
         "labelled_as": record.labelled_as,
+        # A group label is assigned by crossing order, so it is the case most likely to
+        # have the right names on the wrong people. Surfacing the position lets a human
+        # check rather than trust it.
+        "position": record.position,
+        "group_size": size,
     }
+
+
+def _suspect_dicts(review: ReviewQueue, report) -> list[dict]:
+    """Pair each suspect reference with its sighting, so the UI can show the clip."""
+    groups = review.group_sizes()
+    entries = []
+    for suspect in report.suspects:
+        record = review.get(suspect.sighting_id)
+        base = _as_dict(record, groups) if record is not None else {"id": suspect.sighting_id}
+        entries.append(
+            {
+                **base,
+                "similarity": suspect.similarity,
+                "average": suspect.average,
+                "shortfall": suspect.shortfall,
+                "reason": suspect.reason,
+            }
+        )
+    return entries
 
 
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/api/sightings")
     def sightings() -> JSONResponse:
+        groups = review.group_sizes()
         return JSONResponse(
             {
-                "pending": [_as_dict(r) for r in review.pending(limit=50)],
-                "labelled": [_as_dict(r) for r in review.labelled(limit=50)],
+                "pending": [_as_dict(r, groups) for r in review.pending(limit=50)],
+                "labelled": [_as_dict(r, groups) for r in review.labelled(limit=50)],
                 "people": review.counts(),
             }
         )
+
+    @app.get("/api/audit")
+    def audit() -> JSONResponse:
+        """Enrolled faces worth a second look, and people with too few examples."""
+        report = review.audit()
+        return JSONResponse({"suspects": _suspect_dicts(review, report), "thin": report.thin})
 
     @app.post("/api/label")
     def label(body: LabelRequest) -> JSONResponse:
@@ -62,6 +98,14 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
         if not name:
             raise HTTPException(status_code=400, detail="a name is required")
         outcome = review.label(body.sighting_id, name)
+        if not outcome.succeeded:
+            raise HTTPException(status_code=404, detail=outcome.value)
+        return JSONResponse({"outcome": outcome.value, "people": review.counts()})
+
+    @app.post("/api/dismiss")
+    def dismiss(body: DismissRequest) -> JSONResponse:
+        """Reject a sighting: stop offering it, and remove any reference it contributed."""
+        outcome = review.dismiss(body.sighting_id)
         if not outcome.succeeded:
             raise HTTPException(status_code=404, detail=outcome.value)
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})

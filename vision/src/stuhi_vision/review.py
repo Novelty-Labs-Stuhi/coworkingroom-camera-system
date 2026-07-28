@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from .domain import Outcome, Sighting
+from .enrolment import Audit, Reference, audit
 from .recognition.gallery import FaceGallery
 
 _INDEX = "index.json"
@@ -42,12 +43,18 @@ class LabelOutcome(Enum):
     ENROLLED = "enrolled"  # first label for this sighting; one reference added
     CORRECTED = "corrected"  # moved from a previous name; no duplicate left behind
     UNCHANGED = "unchanged"  # already labelled that way, so nothing was added
+    DISMISSED = "dismissed"  # marked unusable; any reference it contributed was removed
     NO_FACE = "no_face"  # nothing to enrol -- no embedding was kept
     UNKNOWN_ID = "unknown_id"
 
     @property
     def succeeded(self) -> bool:
-        return self in (LabelOutcome.ENROLLED, LabelOutcome.CORRECTED, LabelOutcome.UNCHANGED)
+        return self in (
+            LabelOutcome.ENROLLED,
+            LabelOutcome.CORRECTED,
+            LabelOutcome.UNCHANGED,
+            LabelOutcome.DISMISSED,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +74,9 @@ class ReviewRecord:
     # once. Defaults keep records written before this existed loadable.
     position: int = 1
     burst: int = 0
+    # Marked unusable by a human -- back of a head, motion blur, nobody really there. Kept
+    # rather than deleted so it stops being offered without losing the evidence.
+    dismissed: bool = False
 
     @property
     def display_name(self) -> str:
@@ -212,6 +222,7 @@ class ReviewQueue:
             record
             for record in self._records.values()
             if record.labelled_as is None
+            and not record.dismissed
             and record.outcome != Outcome.UNIDENTIFIED.value
             and (self._dir / f"{record.sighting_id}.npy").exists()
         ]
@@ -221,6 +232,71 @@ class ReviewQueue:
     def counts(self) -> dict[str, int]:
         """Enrolled reference vectors per name."""
         return self._gallery.counts()
+
+    def group_sizes(self) -> dict[int, int]:
+        """How many people crossed in each burst, so a group label can be flagged."""
+        sizes: dict[int, int] = {}
+        with self._lock:
+            for record in self._records.values():
+                if record.burst:
+                    sizes[record.burst] = sizes.get(record.burst, 0) + 1
+        return sizes
+
+    def dismiss(self, sighting_id: str) -> LabelOutcome:
+        """Mark a sighting unusable, removing any reference it contributed.
+
+        A back-of-head or blurred capture should stop being offered *and* stop influencing
+        recognition. Discarding from the gallery first is the important half: leaving the
+        reference behind while hiding the card would keep degrading matches invisibly.
+        """
+        with self._lock:
+            record = self._records.get(sighting_id)
+            if record is None:
+                return LabelOutcome.UNKNOWN_ID
+            if record.labelled_as is not None:
+                path = self._dir / f"{sighting_id}.npy"
+                if path.exists():
+                    self._gallery.discard(record.labelled_as, np.load(path))
+                    self._gallery.save(self._gallery_dir)
+            self._records[sighting_id] = ReviewRecord(
+                **{**asdict(record), "labelled_as": None, "dismissed": True}
+            )
+            self._flush()
+            return LabelOutcome.DISMISSED
+
+    def references(self) -> list[Reference]:
+        """Every enrolled face, tied back to the sighting it came from.
+
+        The gallery alone cannot support an audit: it stores vectors per name with no record
+        of which sighting each came from, so a suspect reference could be identified but not
+        shown to anyone. The review index supplies that link.
+        """
+        with self._lock:
+            labelled = [
+                record
+                for record in self._records.values()
+                if record.labelled_as is not None and not record.dismissed
+            ]
+        found = []
+        for record in labelled:
+            path = self._dir / f"{record.sighting_id}.npy"
+            if path.exists():
+                found.append(
+                    Reference(
+                        sighting_id=record.sighting_id,
+                        name=record.labelled_as,
+                        embedding=np.load(path),
+                    )
+                )
+        return found
+
+    def audit(self) -> Audit:
+        """Which enrolled faces look wrong, and who has too few examples."""
+        return audit(self.references())
+
+    def get(self, sighting_id: str) -> ReviewRecord | None:
+        with self._lock:
+            return self._records.get(sighting_id)
 
     # --- persistence --------------------------------------------------------
     def _next_id(self, timestamp: float) -> str:

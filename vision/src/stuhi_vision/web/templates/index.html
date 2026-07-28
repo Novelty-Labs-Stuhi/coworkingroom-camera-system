@@ -21,6 +21,25 @@
     <p class="empty" id="people-empty">Nobody yet. The first label creates the gallery.</p>
   </section>
 
+  <section id="check-panel">
+    <h2>Worth checking <span class="count" id="suspects-count"></span></h2>
+    <p class="hint">
+      These enrolled faces sit far from the rest of that person's faces &mdash; a wrong
+      name, a group labelled out of order, or the back of a head. Correct the name, or
+      reject the clip to remove it from the gallery.
+    </p>
+    <div id="suspects" class="grid"></div>
+    <p class="empty" id="suspects-empty">Nothing looks out of place.</p>
+
+    <h3>Needs more examples</h3>
+    <p class="hint">
+      One or two faces is not enough to recognise someone reliably &mdash; and with two, an
+      odd one out cannot be detected at all. Label a few more clips of these people.
+    </p>
+    <ul id="thin" class="people"></ul>
+    <p class="empty" id="thin-empty">Everyone has enough.</p>
+  </section>
+
   <section>
     <h2>Waiting for a name <span class="count" id="pending-count"></span></h2>
     <div id="pending" class="grid"></div>
@@ -42,12 +61,17 @@
       <div class="meta">
         <span class="direction"></span>
         <span class="score"></span>
+        <span class="group" hidden></span>
       </div>
       <p class="current"></p>
+      <p class="why" hidden></p>
       <form class="label-form">
         <input class="name" type="text" list="known-names" placeholder="name"
                autocomplete="off" spellcheck="false" required>
         <button type="submit">Save</button>
+        <button type="button" class="reject" title="Unusable: remove from the gallery">
+          Reject
+        </button>
       </form>
       <p class="result" role="status"></p>
     </article>
