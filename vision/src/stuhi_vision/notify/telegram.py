@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 
 from ..domain import Outcome, Sighting
-from ..review import ReviewQueue
+from ..review import LabelOutcome, ReviewQueue
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 _POLL_TIMEOUT = 30  # seconds held open by getUpdates; a long poll, not a busy loop
@@ -176,10 +176,18 @@ class TelegramNotifier:
             self._send_message("usage: /label <sighting_id> <name>")
             return
 
-        if self._review.label(sighting_id, name):
-            self._send_message(f"enrolled {sighting_id} as {name}")
-        else:
-            self._send_message(f"nothing to enrol for {sighting_id}")
+        outcome = self._review.label(sighting_id, name)
+        counts = self._review.counts()
+        replies = {
+            LabelOutcome.ENROLLED: f"enrolled as {name} ({counts.get(name, 0)} reference(s))",
+            LabelOutcome.CORRECTED: f"corrected to {name} ({counts.get(name, 0)} reference(s))",
+            LabelOutcome.UNCHANGED: (
+                f"already labelled {name} -- nothing added, one sighting counts once"
+            ),
+            LabelOutcome.NO_FACE: f"no face was kept for {sighting_id} - nothing to enrol",
+            LabelOutcome.UNKNOWN_ID: f"unknown sighting id: {sighting_id}",
+        }
+        self._send_message(replies[outcome])
 
     def _handle_pending(self) -> None:
         records = self._review.pending()

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,20 @@ from .domain import Outcome, Sighting
 from .recognition.gallery import FaceGallery
 
 _INDEX = "index.json"
+
+
+class LabelOutcome(Enum):
+    """What a labelling request actually did."""
+
+    ENROLLED = "enrolled"  # first label for this sighting; one reference added
+    CORRECTED = "corrected"  # moved from a previous name; no duplicate left behind
+    UNCHANGED = "unchanged"  # already labelled that way, so nothing was added
+    NO_FACE = "no_face"  # nothing to enrol -- no embedding was kept
+    UNKNOWN_ID = "unknown_id"
+
+    @property
+    def succeeded(self) -> bool:
+        return self in (LabelOutcome.ENROLLED, LabelOutcome.CORRECTED, LabelOutcome.UNCHANGED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,30 +106,37 @@ class ReviewQueue:
         return sighting_id
 
     # --- labelling ----------------------------------------------------------
-    def label(self, sighting_id: str, name: str) -> bool:
+    def label(self, sighting_id: str, name: str) -> LabelOutcome:
         """Enrol a sighting's face under ``name``, correcting any previous label.
 
-        False when the id is unknown or no face embedding was kept for it (an
-        ``UNIDENTIFIED`` sighting has nothing to enrol).
+        Labelling the same sighting the same way twice is deliberately a no-op: one
+        sighting contributes exactly one reference vector, however many times it is
+        labelled. Otherwise a repeated command would quietly weight that one face more
+        heavily than everybody else's.
+
+        The outcome is reported rather than a bare success flag, so the person labelling
+        can tell "added" from "already like that" instead of guessing.
         """
         record = self._records.get(sighting_id)
         if record is None:
-            return False
+            return LabelOutcome.UNKNOWN_ID
         embedding_path = self._dir / f"{sighting_id}.npy"
         if not embedding_path.exists():
-            return False
+            return LabelOutcome.NO_FACE
+
+        previous = record.labelled_as
+        if previous == name:
+            return LabelOutcome.UNCHANGED
 
         embedding = np.load(embedding_path)
-        previous = record.labelled_as
-        if previous is not None and previous != name:
+        if previous is not None:
             self._gallery.discard(previous, embedding)
-        if previous != name:
-            self._gallery.add(name, embedding)
+        self._gallery.add(name, embedding)
         self._gallery.save(self._gallery_dir)
 
         self._records[sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": name})
         self._flush()
-        return True
+        return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
 
     # --- queries ------------------------------------------------------------
     def crop_path(self, sighting_id: str) -> Path | None:

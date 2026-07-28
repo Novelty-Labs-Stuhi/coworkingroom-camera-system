@@ -6,7 +6,7 @@ import numpy as np
 
 from stuhi_vision.domain import Direction, Outcome, Sighting
 from stuhi_vision.recognition.gallery import FaceGallery
-from stuhi_vision.review import ReviewQueue
+from stuhi_vision.review import LabelOutcome, ReviewQueue
 
 
 def _sighting(embedding: np.ndarray | None = None, **overrides) -> Sighting:
@@ -32,7 +32,7 @@ def test_labelling_enrols_the_face(tmp_path) -> None:
     queue, gallery = _queue(tmp_path)
     sighting_id = queue.record(_sighting())
 
-    assert queue.label(sighting_id, "ilari") is True
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.ENROLLED
     assert gallery.counts() == {"ilari": 1}
     assert (tmp_path / "gallery" / "ilari.npy").exists()
 
@@ -62,14 +62,14 @@ def test_relabelling_to_the_same_name_does_not_duplicate(tmp_path) -> None:
 
 def test_unknown_id_is_refused(tmp_path) -> None:
     queue, _ = _queue(tmp_path)
-    assert queue.label("2020-01-01_00-00-00", "ilari") is False
+    assert queue.label("2020-01-01_00-00-00", "ilari") is LabelOutcome.UNKNOWN_ID
 
 
 def test_sighting_without_a_face_cannot_be_enrolled(tmp_path) -> None:
     queue, gallery = _queue(tmp_path)
     sighting_id = queue.record(_sighting(face_embedding=None, outcome=Outcome.UNIDENTIFIED))
 
-    assert queue.label(sighting_id, "ilari") is False
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.NO_FACE
     assert gallery.counts() == {}
 
 
@@ -98,3 +98,24 @@ def test_simultaneous_sightings_get_distinct_ids(tmp_path) -> None:
     first = queue.record(_sighting())
     second = queue.record(_sighting())
     assert first != second
+
+
+def test_labelling_the_same_way_twice_adds_nothing(tmp_path) -> None:
+    # One sighting must contribute exactly one reference however many times it is
+    # labelled, or a repeated command quietly over-weights that one face.
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.ENROLLED
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.UNCHANGED
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.UNCHANGED
+    assert gallery.counts() == {"ilari": 1}
+
+
+def test_correcting_a_label_is_reported_as_a_correction(tmp_path) -> None:
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+
+    queue.label(sighting_id, "ilari")
+    assert queue.label(sighting_id, "mark") is LabelOutcome.CORRECTED
+    assert gallery.counts() == {"mark": 1}
