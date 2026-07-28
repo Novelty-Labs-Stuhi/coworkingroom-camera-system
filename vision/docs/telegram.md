@@ -75,3 +75,27 @@ added to the right one, so one mistake does not stay in the gallery.
   responsible.
 - `/pending` is the backlog. If it grows, either faces are too small at the mounting
   position, or the match threshold is too strict for your camera.
+
+## The web UI
+
+The same queue is also labelled from a browser, served from inside the pipeline process:
+
+```
+http://<server>:8800
+```
+
+It shows each waiting sighting as its clip, with a name box; already-labelled sightings
+appear below so a name can be corrected. Enrolled people and their reference counts are
+listed at the top — that count is the honest check that a label added a reference.
+
+Both routes drive one `ReviewQueue` and one `FaceGallery`, so:
+
+- a sighting labelled in the chat shows as labelled in the UI, and vice versa;
+- labelling the same sighting from **both** still adds exactly one reference vector;
+- a label takes effect on the next frame, with no restart.
+
+Running in the pipeline process is what makes that last point true: the gallery lives in
+memory inside the recogniser, so a separate process could only write files and the running
+pipeline would not see the new face until it restarted.
+
+Disable it with `enabled = false` under `[web]`.

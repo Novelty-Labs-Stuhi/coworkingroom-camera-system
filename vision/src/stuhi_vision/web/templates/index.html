@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stuhi labelling</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <h1>Who came through?</h1>
+    <p class="hint">
+      Watch the clip, then give the person a name. Labelling the same clip again
+      changes nothing &mdash; one sighting counts once, however many times you label it.
+    </p>
+  </header>
+
+  <section id="people-panel">
+    <h2>Enrolled</h2>
+    <ul id="people" class="people"></ul>
+    <p class="empty" id="people-empty">Nobody yet. The first label creates the gallery.</p>
+  </section>
+
+  <section>
+    <h2>Waiting for a name <span class="count" id="pending-count"></span></h2>
+    <div id="pending" class="grid"></div>
+    <p class="empty" id="pending-empty">Nothing waiting. Walk through the doorway.</p>
+  </section>
+
+  <section>
+    <h2>Already labelled</h2>
+    <p class="hint">Give a different name to correct one. The wrong reference is removed.</p>
+    <div id="labelled" class="grid"></div>
+    <p class="empty" id="labelled-empty">None yet.</p>
+  </section>
+
+  <template id="card-template">
+    <article class="card">
+      <video controls muted loop preload="metadata"></video>
+      <div class="meta">
+        <span class="direction"></span>
+        <span class="score"></span>
+      </div>
+      <p class="current"></p>
+      <form class="label-form">
+        <input class="name" type="text" list="known-names" placeholder="name"
+               autocomplete="off" spellcheck="false" required>
+        <button type="submit">Save</button>
+      </form>
+      <p class="result" role="status"></p>
+    </article>
+  </template>
+
+  <datalist id="known-names"></datalist>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

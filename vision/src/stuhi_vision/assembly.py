@@ -17,7 +17,7 @@ from .handlers import Doorkeeper
 from .ledger import Ledger
 from .notify import TelegramNotifier
 from .pipeline import FrameObserver, Pipeline
-from .publishing import SightingPublisher
+from .publishing import Publication, SightingPublisher
 from .recognition.body import BodyEmbedder
 from .recognition.face import FaceRecognizer
 from .recognition.gallery import FaceGallery
@@ -29,6 +29,7 @@ from .sources.buffered import BufferedSource
 from .store import EventStore
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
+from .web import WebUI
 
 
 @dataclass(slots=True)
@@ -39,11 +40,14 @@ class Application:
     sessions: SessionManager
     publisher: SightingPublisher
     notifier: TelegramNotifier | None = None
+    web: WebUI | None = None
 
     def close(self) -> None:
         # Anything still waiting for its clip to finish must go out, or a crossing right
         # before shutdown would be silently dropped.
         self.publisher.flush()
+        if self.web is not None:
+            self.web.stop()
         if self.notifier is not None:
             self.notifier.stop()
         self.sessions.close()
@@ -76,6 +80,13 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     if config.telegram.enabled:
         notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id, review)
         notifier.start()
+
+    # Both labelling routes share this one queue and gallery, so a label from either takes
+    # effect on the next frame and the same sighting can never be counted twice.
+    web: WebUI | None = None
+    if config.web.enabled:
+        web = WebUI(review, host=config.web.host, port=config.web.port)
+        web.start()
 
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
     # frames that happened to follow the commit.
@@ -117,6 +128,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         sessions=sessions,
         publisher=publisher,
         notifier=notifier,
+        web=web,
     )
 
 
@@ -176,10 +188,14 @@ def _frame_hook(publisher: SightingPublisher, observer: FrameObserver | None):
 def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce):
     """File a completed sighting with its clip, notify the chat, then hand it on."""
 
-    def publish(sighting: Sighting, clip: bytes | None, position: int, total: int) -> None:
-        sighting_id = review.record(sighting, encode_jpeg=encode_jpeg, clip=clip)
+    def publish(publication: Publication) -> None:
+        sighting_id = review.record(
+            publication.sighting, encode_jpeg=encode_jpeg, clip=publication.clip
+        )
         if notifier is not None:
-            notifier.announce(sighting, sighting_id, position, total)
-        announce(sighting)
+            notifier.announce(
+                publication.sighting, sighting_id, publication.position, publication.total
+            )
+        announce(publication.sighting)
 
     return publish

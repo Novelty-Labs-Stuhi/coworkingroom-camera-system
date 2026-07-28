@@ -21,11 +21,27 @@ from .clips import ClipRecorder, PendingClip
 from .domain import Sighting
 
 
+@dataclass(frozen=True, slots=True)
+class Publication:
+    """One finished sighting, ready to file and announce.
+
+    ``position`` and ``total`` place it within its burst, and ``burst`` identifies the
+    burst itself -- which is what lets a whole group be labelled in one command.
+    """
+
+    sighting: Sighting
+    clip: bytes | None
+    position: int
+    total: int
+    burst: int
+
+
 @dataclass
 class _Held:
     sighting: Sighting
     clip: PendingClip
     position: int  # 1-based order of crossing within this burst
+    burst: int
     clear_frames: int = 0
 
 
@@ -43,6 +59,7 @@ class SightingPublisher:
         self._clear_frames = max(1, clear_frames)
         self._held: list[_Held] = []
         self._burst_count = 0
+        self._burst = 0
 
     @property
     def pending_count(self) -> int:
@@ -56,9 +73,16 @@ class SightingPublisher:
         cross at once their clips look almost identical, so the position is the only thing
         that says which person a given clip is about.
         """
+        if self._burst_count == 0:
+            self._burst += 1  # first crossing of a new group
         self._burst_count += 1
         self._held.append(
-            _Held(sighting=sighting, clip=self._recorder.begin(), position=self._burst_count)
+            _Held(
+                sighting=sighting,
+                clip=self._recorder.begin(),
+                position=self._burst_count,
+                burst=self._burst,
+            )
         )
 
     def advance(self, people_present: bool) -> None:
@@ -83,6 +107,14 @@ class SightingPublisher:
         total = self._burst_count
         for held in sorted(ready, key=lambda h: h.position):
             self._held.remove(held)
-            self._publish(held.sighting, self._recorder.finish(held.clip), held.position, total)
+            self._publish(
+                Publication(
+                    sighting=held.sighting,
+                    clip=self._recorder.finish(held.clip),
+                    position=held.position,
+                    total=total,
+                    burst=held.burst,
+                )
+            )
         if not self._held:
             self._burst_count = 0  # burst over; the next person starts a new group

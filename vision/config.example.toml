@@ -37,6 +37,12 @@ clip_frames = 48            # pre-roll frames: the approach to the crossing
 clip_clear_frames = 10      # people-free frames before the clip is cut, so it has an ending
 clip_max_frames = 200       # hard cap, so a loiterer cannot hold a clip open forever
 
+[web]
+# The labelling UI, served from inside the pipeline process so it shares the live gallery.
+enabled = true
+host = "0.0.0.0"
+port = 8800
+
 [paths]
 gallery_dir = "gallery"
 database = "data/occupancy.db"

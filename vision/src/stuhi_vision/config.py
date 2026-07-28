@@ -97,6 +97,15 @@ class Paths:
 
 
 @dataclass(frozen=True, slots=True)
+class Web:
+    """The labelling UI. Runs in the pipeline process so it shares the live gallery."""
+
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8800
+
+
+@dataclass(frozen=True, slots=True)
 class Telegram:
     """Bot credentials, read from the environment so they are never committed."""
 
@@ -122,6 +131,7 @@ class Config:
     thresholds: Thresholds = field(default_factory=Thresholds)
     performance: Performance = field(default_factory=Performance)
     paths: Paths = field(default_factory=Paths)
+    web: Web = field(default_factory=Web)
     telegram: Telegram = field(default_factory=Telegram.from_env)
 
 
@@ -156,4 +166,5 @@ def load(path: str | Path) -> Config:
         thresholds=thresholds,
         performance=performance,
         paths=paths,
+        web=Web(**data.get("web", {})),
     )

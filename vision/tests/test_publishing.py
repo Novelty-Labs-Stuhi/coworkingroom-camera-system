@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from stuhi_vision.clips import ClipRecorder
 from stuhi_vision.domain import Direction, Outcome, Sighting
-from stuhi_vision.publishing import SightingPublisher
+from stuhi_vision.publishing import Publication, SightingPublisher
 
 
 def _sighting() -> Sighting:
@@ -19,12 +19,8 @@ def _sighting() -> Sighting:
 
 def _setup(clear_frames: int = 3, max_clip_frames: int = 50):
     recorder = ClipRecorder(encode_jpeg=bytes, capacity=4, max_clip_frames=max_clip_frames)
-    published: list[tuple[Sighting, bytes | None, int, int]] = []
-    publisher = SightingPublisher(
-        recorder,
-        lambda s, clip, position, total: published.append((s, clip, position, total)),
-        clear_frames=clear_frames,
-    )
+    published: list[Publication] = []
+    publisher = SightingPublisher(recorder, published.append, clear_frames=clear_frames)
     return recorder, publisher, published
 
 
@@ -113,8 +109,8 @@ def test_several_people_are_numbered_in_crossing_order() -> None:
 
     publisher.advance(people_present=False)
 
-    assert [(p, total) for _s, _c, p, total in published] == [(1, 3), (2, 3), (3, 3)]
-    assert [s for s, _c, _p, _t in published] == [first, second, third]
+    assert [(p.position, p.total) for p in published] == [(1, 3), (2, 3), (3, 3)]
+    assert [p.sighting for p in published] == [first, second, third]
 
 
 def test_a_lone_crossing_is_not_numbered() -> None:
@@ -122,7 +118,7 @@ def test_a_lone_crossing_is_not_numbered() -> None:
     publisher.hold(_sighting())
     publisher.advance(people_present=False)
 
-    assert published[0][2:] == (1, 1)  # position 1 of 1 -- caption omits it
+    assert (published[0].position, published[0].total) == (1, 1)  # caption omits it
 
 
 def test_numbering_restarts_for_the_next_burst() -> None:
@@ -132,4 +128,4 @@ def test_numbering_restarts_for_the_next_burst() -> None:
     publisher.hold(_sighting())
     publisher.advance(people_present=False)
 
-    assert [p for _s, _c, p, _t in published] == [1, 1]
+    assert [p.position for p in published] == [1, 1]

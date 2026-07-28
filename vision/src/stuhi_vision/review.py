@@ -22,6 +22,7 @@ the gallery and fixes the review record, but does not rewrite history.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
@@ -75,9 +76,19 @@ class ReviewQueue:
         self._gallery_dir = gallery_dir
         self._dir.mkdir(parents=True, exist_ok=True)
         self._records: dict[str, ReviewRecord] = {}
+        # Sightings are filed by the pipeline thread and labelled by the chat poller and
+        # the web UI, so the record index needs guarding as much as the gallery does.
+        self._lock = threading.RLock()
         self._load()
 
     # --- recording ----------------------------------------------------------
+    def labelled(self, limit: int = 50) -> list[ReviewRecord]:
+        """Sightings that already carry a label, newest first, so one can be corrected."""
+        with self._lock:
+            done = [r for r in self._records.values() if r.labelled_as is not None]
+        done.sort(key=lambda record: record.timestamp, reverse=True)
+        return done[:limit]
+
     def record(self, sighting: Sighting, encode_jpeg=None, clip: bytes | None = None) -> str:
         """File a sighting and return its id.
 
@@ -117,26 +128,35 @@ class ReviewQueue:
         The outcome is reported rather than a bare success flag, so the person labelling
         can tell "added" from "already like that" instead of guessing.
         """
-        record = self._records.get(sighting_id)
-        if record is None:
-            return LabelOutcome.UNKNOWN_ID
-        embedding_path = self._dir / f"{sighting_id}.npy"
-        if not embedding_path.exists():
-            return LabelOutcome.NO_FACE
+        with self._lock:
+            record = self._records.get(sighting_id)
+            if record is None:
+                return LabelOutcome.UNKNOWN_ID
+            embedding_path = self._dir / f"{sighting_id}.npy"
+            if not embedding_path.exists():
+                return LabelOutcome.NO_FACE
 
-        previous = record.labelled_as
-        if previous == name:
-            return LabelOutcome.UNCHANGED
+            previous = record.labelled_as
+            embedding = np.load(embedding_path)
 
-        embedding = np.load(embedding_path)
-        if previous is not None:
-            self._gallery.discard(previous, embedding)
-        self._gallery.add(name, embedding)
-        self._gallery.save(self._gallery_dir)
+            # Two things can make this a no-op: the record already says this name, or the
+            # vector is already enrolled under it (the same sighting labelled from the chat
+            # and from the web UI). Either way one sighting must count exactly once.
+            if previous == name or self._gallery.contains(name, embedding):
+                if previous != name:
+                    self._remember(record, name)
+                return LabelOutcome.UNCHANGED
 
-        self._records[sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": name})
+            if previous is not None:
+                self._gallery.discard(previous, embedding)
+            self._gallery.add(name, embedding)
+            self._gallery.save(self._gallery_dir)
+            self._remember(record, name)
+            return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
+
+    def _remember(self, record: ReviewRecord, name: str) -> None:
+        self._records[record.sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": name})
         self._flush()
-        return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
 
     # --- queries ------------------------------------------------------------
     def crop_path(self, sighting_id: str) -> Path | None:
