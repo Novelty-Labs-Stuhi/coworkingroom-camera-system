@@ -32,6 +32,7 @@ import numpy as np
 
 from .domain import Outcome, Sighting
 from .enrolment import Audit, Reference, audit
+from .names import parse_names
 from .recognition.gallery import FaceGallery
 
 _INDEX = "index.json"
@@ -44,6 +45,7 @@ class LabelOutcome(Enum):
     CORRECTED = "corrected"  # moved from a previous name; no duplicate left behind
     UNCHANGED = "unchanged"  # already labelled that way, so nothing was added
     DISMISSED = "dismissed"  # marked unusable; any reference it contributed was removed
+    UNLABELLED = "unlabelled"  # label taken back; the sighting returns to the pending list
     NO_FACE = "no_face"  # nothing to enrol -- no embedding was kept
     UNKNOWN_ID = "unknown_id"
 
@@ -54,6 +56,7 @@ class LabelOutcome(Enum):
             LabelOutcome.CORRECTED,
             LabelOutcome.UNCHANGED,
             LabelOutcome.DISMISSED,
+            LabelOutcome.UNLABELLED,
         )
 
 
@@ -263,6 +266,41 @@ class ReviewQueue:
             )
             self._flush()
             return LabelOutcome.DISMISSED
+
+    def unlabel(self, sighting_id: str) -> LabelOutcome:
+        """Take a label back, returning the sighting to the pending list.
+
+        Unlike :meth:`dismiss`, the clip is still considered usable -- this is for a label
+        that was simply wrong, where the right answer is to look at it again.
+        """
+        with self._lock:
+            record = self._records.get(sighting_id)
+            if record is None:
+                return LabelOutcome.UNKNOWN_ID
+            if record.labelled_as is None:
+                return LabelOutcome.UNCHANGED
+            path = self._dir / f"{sighting_id}.npy"
+            if path.exists():
+                self._gallery.discard(record.labelled_as, np.load(path))
+                self._gallery.save(self._gallery_dir)
+            self._records[sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": None})
+            self._flush()
+            return LabelOutcome.UNLABELLED
+
+    def composite_labels(self) -> list[ReviewRecord]:
+        """Labels that are really several names in one string.
+
+        These are not people. They came from a route that passed free text straight through
+        as a single name, so each sits in the gallery as a person of its own with a single
+        reference, competing with the real entries.
+        """
+        with self._lock:
+            records = list(self._records.values())
+        return [
+            record
+            for record in records
+            if record.labelled_as is not None and len(parse_names(record.labelled_as)) > 1
+        ]
 
     def references(self) -> list[Reference]:
         """Every enrolled face, tied back to the sighting it came from.

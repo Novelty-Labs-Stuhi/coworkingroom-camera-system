@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from ..names import parse_names
 from ..review import ReviewQueue
 
 _HERE = Path(__file__).parent
@@ -74,6 +75,39 @@ def _suspect_dicts(review: ReviewQueue, report) -> list[dict]:
     return entries
 
 
+def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONResponse:
+    """One name labels one sighting; several label a whole group in crossing order."""
+    names = parse_names(text)
+    if not names:
+        raise HTTPException(status_code=400, detail="a name is required")
+
+    if len(names) == 1:
+        outcome = review.label(sighting_id, names[0])
+        if not outcome.succeeded:
+            raise HTTPException(status_code=404, detail=outcome.value)
+        return JSONResponse({"outcome": outcome.value, "people": review.counts()})
+
+    if len(review.burst_members(sighting_id)) < 2:
+        # Refusing beats inventing: passing the text through as one name is what created
+        # gallery entries like "a, yehor".
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{len(names)} names given but only one person crossed here. "
+                "Label them one clip at a time."
+            ),
+        )
+
+    results = review.label_burst(sighting_id, names)
+    return JSONResponse(
+        {
+            "outcome": "enrolled",
+            "people": review.counts(),
+            "group": [{"id": id_, "outcome": result.value} for id_, result in results],
+        }
+    )
+
+
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/api/sightings")
     def sightings() -> JSONResponse:
@@ -94,13 +128,13 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
 
     @app.post("/api/label")
     def label(body: LabelRequest) -> JSONResponse:
-        name = body.name.strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="a name is required")
-        outcome = review.label(body.sighting_id, name)
-        if not outcome.succeeded:
-            raise HTTPException(status_code=404, detail=outcome.value)
-        return JSONResponse({"outcome": outcome.value, "people": review.counts()})
+        """Label one sighting, or a whole group when several names are given.
+
+        The names are read with the same parser the chat uses. Passing the raw text through
+        as a single name is what produced gallery entries like ``a, yehor`` -- a person who
+        does not exist, quietly competing with the real ones.
+        """
+        return _apply_label(review, body.sighting_id, body.name)
 
     @app.post("/api/dismiss")
     def dismiss(body: DismissRequest) -> JSONResponse:

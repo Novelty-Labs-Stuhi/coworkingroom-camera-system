@@ -179,3 +179,30 @@ def test_group_sizes_count_everyone_who_crossed_together(tmp_path) -> None:
     queue.record(_sighting(), position=1, burst=5)
 
     assert queue.group_sizes() == {4: 2, 5: 1}
+
+
+def test_unlabelling_returns_a_sighting_to_the_pending_list(tmp_path) -> None:
+    queue, gallery = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+    queue.label(sighting_id, "ilari")
+
+    assert queue.unlabel(sighting_id) is LabelOutcome.UNLABELLED
+    assert gallery.counts() == {}
+    assert [r.sighting_id for r in queue.pending()] == [sighting_id]
+
+
+def test_unlabelling_something_unlabelled_changes_nothing(tmp_path) -> None:
+    queue, _ = _queue(tmp_path)
+    sighting_id = queue.record(_sighting())
+    assert queue.unlabel(sighting_id) is LabelOutcome.UNCHANGED
+
+
+def test_composite_labels_are_reported(tmp_path) -> None:
+    # These are not people: they came from free text passed through as a single name.
+    queue, _ = _queue(tmp_path)
+    good = queue.record(_sighting())
+    bad = queue.record(_sighting(embedding=np.array([0.0, 1.0, 0.0])))
+    queue.label(good, "ilari")
+    queue.label(bad, "a, yehor")
+
+    assert [r.sighting_id for r in queue.composite_labels()] == [bad]

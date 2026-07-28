@@ -24,6 +24,7 @@ import threading
 from pathlib import Path
 
 from ..domain import Outcome, Sighting
+from ..names import parse_names
 from ..review import LabelOutcome, ReviewQueue
 
 _API = "https://api.telegram.org/bot{token}/{method}"
@@ -244,21 +245,6 @@ class TelegramNotifier:
             self._send_message("gallery is empty - label a sighting to enrol someone")
             return
         self._send_message("\n".join(f"{name}: {count}" for name, count in counts.items()))
-
-
-def parse_names(text: str) -> list[str]:
-    """Read one or more names from a plain reply.
-
-    Accepts ``ilari``, ``a, b, c`` and ``[a, b, c]`` -- people write the list either way,
-    and the brackets carry no meaning. Commas separate, so a name may contain spaces.
-    Anything command-like is refused, so a mistyped ``/pending`` cannot enrol a face
-    called "pending".
-    """
-    cleaned = text.strip().strip("[]").strip()
-    if not cleaned or cleaned.startswith("/"):
-        return []
-    names = [part.strip() for part in cleaned.split(",")]
-    return [name for name in names if name and not name.startswith("/")]
 
 
 def _caption(sighting: Sighting, sighting_id: str, position: int = 1, total: int = 1) -> str:
