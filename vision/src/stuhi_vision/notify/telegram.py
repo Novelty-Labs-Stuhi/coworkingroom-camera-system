@@ -60,11 +60,12 @@ class TelegramNotifier:
 
     # --- outbound -----------------------------------------------------------
     def announce(self, sighting: Sighting, sighting_id: str) -> None:
-        """Post one crossing. Never raises -- a chat outage must not stop the pipeline.
+        """Post one crossing as a clip. Never raises -- a chat outage must not stop work.
 
-        A clip of the moment is preferred when there is one: it shows which way the person
-        went and whether anyone came through with them. The face crop follows separately,
-        because a still is the better thing to look at when deciding a label.
+        One message per crossing: the clip shows which way the person went and whether
+        anyone came through with them, which is what makes it judgeable. The face crop is
+        still saved to disk for inspection, but sending it too doubled the traffic in the
+        chat for little gain. The still is only used when no clip could be made.
         """
         caption = _caption(sighting, sighting_id)
         clip = self._review.clip_path(sighting_id)
@@ -72,8 +73,6 @@ class TelegramNotifier:
         try:
             if clip is not None:
                 self._send_video(clip, caption)
-                if crop is not None:
-                    self._send_photo(crop, f"face for {sighting_id}")
             elif crop is not None:
                 self._send_photo(crop, caption)
             else:

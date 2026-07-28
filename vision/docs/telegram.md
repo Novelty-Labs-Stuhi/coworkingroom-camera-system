@@ -34,7 +34,8 @@ here, rather than silently swallowing every later notification.
 
 ## 4. Using it
 
-Each doorway crossing arrives as the person's face crop, captioned with one of:
+Each doorway crossing arrives as **one video** -- the approach, the crossing, and enough
+afterwards that it ends on an empty doorway -- captioned with one of:
 
 | Caption | Meaning |
 |---|---|
@@ -42,6 +43,9 @@ Each doorway crossing arrives as the person's face crop, captioned with one of:
 | `in: unknown (best 0.22)` | a face was seen but matched nobody — **label it** |
 | `out: ilari (linked)` | no face at the exit; linked to an occupant by body |
 | `in: no face seen` | crossing counted, but no usable face |
+
+The face crop is still written to the review directory for inspection; it is not sent, so
+each crossing is exactly one message.
 
 Commands:
 
