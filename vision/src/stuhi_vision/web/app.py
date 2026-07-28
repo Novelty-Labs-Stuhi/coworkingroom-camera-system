@@ -144,6 +144,14 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
             raise HTTPException(status_code=404, detail=outcome.value)
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})
 
+    @app.post("/api/unlabel")
+    def unlabel(body: DismissRequest) -> JSONResponse:
+        """Take a label back and return the clip to the queue -- the clip is still usable."""
+        outcome = review.unlabel(body.sighting_id)
+        if not outcome.succeeded:
+            raise HTTPException(status_code=404, detail=outcome.value)
+        return JSONResponse({"outcome": outcome.value, "people": review.counts()})
+
 
 def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/media/{sighting_id}.mp4")

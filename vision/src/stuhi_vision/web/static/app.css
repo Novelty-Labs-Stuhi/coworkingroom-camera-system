@@ -126,3 +126,11 @@ button.reject {
   font-weight: 400;
 }
 button.reject:hover { border-color: #f0776a; color: #f0776a; filter: none; }
+
+button.undo {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+  font-weight: 400;
+}
+button.undo:hover { border-color: var(--warn); color: var(--warn); filter: none; }

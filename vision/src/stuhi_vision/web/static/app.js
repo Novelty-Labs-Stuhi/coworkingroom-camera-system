@@ -3,6 +3,7 @@ const MESSAGES = {
   corrected: ['ok', 'Corrected.'],
   unchanged: ['same', 'Already that name — nothing added.'],
   dismissed: ['same', 'Rejected — removed from the gallery.'],
+  unlabelled: ['same', 'Label removed — back in the queue.'],
 };
 
 async function loadSightings() {
@@ -173,6 +174,11 @@ function buildCard(record) {
   });
   fragment.querySelector('.reject').addEventListener('click', () => {
     send(article, '/api/dismiss', { sighting_id: article.dataset.id });
+  });
+  // Two different mistakes, two different remedies: the clip is unusable (reject), or the
+  // clip is fine but the name was wrong (put it back in the queue).
+  fragment.querySelector('.undo').addEventListener('click', () => {
+    send(article, '/api/unlabel', { sighting_id: article.dataset.id });
   });
 
   return article;
