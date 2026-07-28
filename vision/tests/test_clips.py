@@ -32,8 +32,39 @@ def test_unencodable_frames_are_skipped() -> None:
     assert recorder.frame_count == 0
 
 
-def test_encoding_an_empty_window_returns_nothing() -> None:
-    assert _recorder().encode() is None
+def test_encoding_an_empty_clip_returns_nothing() -> None:
+    recorder = _recorder()
+    assert recorder.finish(recorder.begin()) is None
+
+
+def test_a_clip_starts_from_the_buffered_pre_roll() -> None:
+    recorder = _recorder(capacity=4)
+    recorder.add(b"a")
+    recorder.add(b"b")
+
+    clip = recorder.begin()
+    assert clip.frames == [b"a", b"b"]  # the approach is already in it
+
+
+def test_frames_arriving_after_a_clip_opens_are_appended_to_it() -> None:
+    recorder = _recorder(capacity=2)
+    clip = recorder.begin()
+    recorder.add(b"x")
+    recorder.add(b"y")
+
+    # The ring buffer is only 2 long, but the open clip keeps everything it was given --
+    # otherwise waiting for the person to leave would push the approach back out.
+    assert clip.frames == [b"x", b"y"]
+
+
+def test_a_clip_stops_growing_at_its_cap() -> None:
+    recorder = ClipRecorder(encode_jpeg=bytes, capacity=8, max_clip_frames=2)
+    clip = recorder.begin()
+    for _ in range(5):
+        recorder.add(b"z")
+
+    assert clip.full
+    assert len(clip.frames) == 2
 
 
 def test_capacity_is_at_least_one() -> None:

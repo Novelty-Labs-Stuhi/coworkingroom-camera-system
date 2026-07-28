@@ -17,6 +17,7 @@ from .handlers import Doorkeeper
 from .ledger import Ledger
 from .notify import TelegramNotifier
 from .pipeline import FrameObserver, Pipeline
+from .publishing import SightingPublisher
 from .recognition.body import BodyEmbedder
 from .recognition.face import FaceRecognizer
 from .recognition.gallery import FaceGallery
@@ -36,9 +37,13 @@ class Application:
     store: EventStore
     review: ReviewQueue
     sessions: SessionManager
+    publisher: SightingPublisher
     notifier: TelegramNotifier | None = None
 
     def close(self) -> None:
+        # Anything still waiting for its clip to finish must go out, or a crossing right
+        # before shutdown would be silently dropped.
+        self.publisher.flush()
         if self.notifier is not None:
             self.notifier.stop()
         self.sessions.close()
@@ -74,9 +79,18 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
 
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
     # frames that happened to follow the commit.
-    recorder = ClipRecorder(encode_jpeg, capacity=performance.clip_frames)
+    recorder = ClipRecorder(
+        encode_jpeg,
+        capacity=performance.clip_frames,
+        max_clip_frames=performance.clip_max_frames,
+    )
     source = _recorded(
         BufferedSource(open_source(config.source), performance.buffer_capacity), recorder
+    )
+    publisher = SightingPublisher(
+        recorder,
+        _publisher(review, notifier, announce),
+        clear_frames=performance.clip_clear_frames,
     )
 
     pipeline = Pipeline(
@@ -93,14 +107,15 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         doorway=DoorwayMonitor(config.doorway),
         sessions=sessions,
         doorkeeper=doorkeeper,
-        announce=_reporter(review, notifier, announce, recorder),
-        on_frame=observer,
+        announce=publisher.hold,
+        on_frame=_frame_hook(publisher, observer),
     )
     return Application(
         pipeline=pipeline,
         store=store,
         review=review,
         sessions=sessions,
+        publisher=publisher,
         notifier=notifier,
     )
 
@@ -128,18 +143,24 @@ def _recorded(source, recorder: ClipRecorder):
     return frames()
 
 
-def _reporter(
-    review: ReviewQueue,
-    notifier: TelegramNotifier | None,
-    announce,
-    recorder: ClipRecorder,
-):
-    """File every sighting with a clip of the moment, notify the chat, then hand it on."""
+def _frame_hook(publisher: SightingPublisher, observer: FrameObserver | None):
+    """Drive the publisher every frame, then pass the frame to any caller's observer."""
 
-    def report(sighting: Sighting) -> None:
-        sighting_id = review.record(sighting, encode_jpeg=encode_jpeg, clip=recorder.encode())
+    def on_frame(frame, people, crossings) -> None:
+        publisher.advance(people_present=bool(people))
+        if observer is not None:
+            observer(frame, people, crossings)
+
+    return on_frame
+
+
+def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce):
+    """File a completed sighting with its clip, notify the chat, then hand it on."""
+
+    def publish(sighting: Sighting, clip: bytes | None) -> None:
+        sighting_id = review.record(sighting, encode_jpeg=encode_jpeg, clip=clip)
         if notifier is not None:
             notifier.announce(sighting, sighting_id)
         announce(sighting)
 
-    return report
+    return publish

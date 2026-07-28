@@ -33,7 +33,9 @@ buffer_capacity = 64        # frames the reader may bank while the models work
 face_workers = 4            # threads embedding faces concurrently
 motion_min_fraction = 0.004 # fraction of the frame that must change to run the models
 crop_padding = 0.35         # padding around the doorway line for the detection crop; 0 = whole frame
-clip_frames = 48            # frames of history in the clip sent with each crossing
+clip_frames = 48            # pre-roll frames: the approach to the crossing
+clip_clear_frames = 10      # people-free frames before the clip is cut, so it has an ending
+clip_max_frames = 200       # hard cap, so a loiterer cannot hold a clip open forever
 
 [paths]
 gallery_dir = "gallery"

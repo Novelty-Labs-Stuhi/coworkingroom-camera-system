@@ -20,8 +20,31 @@ import shutil
 import subprocess
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 JpegEncoder = Callable[[object], bytes | None]
+
+
+@dataclass
+class PendingClip:
+    """A clip still being filled: the pre-roll snapshot plus frames still arriving.
+
+    Cutting a clip the instant a crossing commits gives a video that stops mid-stride,
+    with no sense of what happened next. So a clip stays open until the person has left
+    the frame, and only then is encoded.
+    """
+
+    frames: list[bytes] = field(default_factory=list)
+    max_frames: int = 160
+
+    def append(self, jpeg: bytes) -> None:
+        if len(self.frames) < self.max_frames:
+            self.frames.append(jpeg)
+
+    @property
+    def full(self) -> bool:
+        """True once the clip has grown as long as it is allowed to get."""
+        return len(self.frames) >= self.max_frames
 
 
 class ClipRecorder:
@@ -32,10 +55,13 @@ class ClipRecorder:
         encode_jpeg: JpegEncoder,
         capacity: int = 48,
         fps: int = 8,
+        max_clip_frames: int = 160,
     ) -> None:
         self._encode_jpeg = encode_jpeg
         self._frames: deque[bytes] = deque(maxlen=max(1, capacity))
         self._fps = max(1, fps)
+        self._max_clip_frames = max(1, max_clip_frames)
+        self._pending: list[PendingClip] = []
 
     @property
     def frame_count(self) -> int:
@@ -44,17 +70,28 @@ class ClipRecorder:
     def add(self, image) -> None:
         """Remember one frame. Cheap enough to call on every frame, including idle ones."""
         jpeg = self._encode_jpeg(image)
-        if jpeg:
-            self._frames.append(jpeg)
+        if not jpeg:
+            return
+        self._frames.append(jpeg)
+        for clip in self._pending:
+            clip.append(jpeg)
 
-    def encode(self) -> bytes | None:
-        """Encode the current window to MP4 bytes, or ``None`` if that is not possible."""
-        if not self._frames:
+    def begin(self) -> PendingClip:
+        """Open a clip starting from the frames already buffered (the approach)."""
+        clip = PendingClip(frames=list(self._frames), max_frames=self._max_clip_frames)
+        self._pending.append(clip)
+        return clip
+
+    def finish(self, clip: PendingClip) -> bytes | None:
+        """Close a clip and encode it to MP4 bytes, or ``None`` if that is not possible."""
+        if clip in self._pending:
+            self._pending.remove(clip)
+        if not clip.frames:
             return None
         if not shutil.which("ffmpeg"):
             print("  -> ffmpeg not found; install it: sudo apt-get install -y ffmpeg")
             return None
-        return _encode_h264(list(self._frames), self._fps)
+        return _encode_h264(clip.frames, self._fps)
 
 
 def _encode_h264(frames: list[bytes], fps: int) -> bytes | None:

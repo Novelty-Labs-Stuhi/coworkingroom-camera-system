@@ -71,9 +71,14 @@ class Performance:
     # Fraction of the frame padded around the doorway line to form the detection crop.
     # 0 disables cropping and runs detection on the whole frame.
     crop_padding: float = 0.35
-    # Frames kept for the clip sent with each crossing. Held as JPEG (~14 KB each), so a
-    # few seconds of history is cheap.
+    # Frames of history kept as the clip's pre-roll -- the approach to the crossing. Held
+    # as JPEG (~14 KB each), so a few seconds is cheap.
     clip_frames: int = 48
+    # Consecutive people-free frames before a clip is considered finished. This is what
+    # makes the video end on an empty doorway instead of stopping mid-stride.
+    clip_clear_frames: int = 10
+    # Hard cap on clip length, so someone loitering cannot hold a clip open forever.
+    clip_max_frames: int = 200
 
 
 @dataclass(frozen=True, slots=True)
