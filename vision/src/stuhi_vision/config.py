@@ -52,6 +52,17 @@ class Performance:
     # YOLO inference resolution: 640 costs ~440 ms/frame on a CPU without AVX2, 320
     # costs ~200 ms. A doorway sees people close up, so 320 is the sensible default.
     detect_imgsz: int = 320
+    # Frames the reader thread may bank while the models work. This is what stops a slow
+    # machine from *missing* a crossing; it trades latency for completeness.
+    buffer_capacity: int = 64
+    # Threads embedding faces concurrently. Per-person work is independent, unlike
+    # tracking, which must stay sequential.
+    face_workers: int = 4
+    # Fraction of the frame that must change for a frame to reach the models at all.
+    motion_min_fraction: float = 0.004
+    # Fraction of the frame padded around the doorway line to form the detection crop.
+    # 0 disables cropping and runs detection on the whole frame.
+    crop_padding: float = 0.35
 
 
 @dataclass(frozen=True, slots=True)

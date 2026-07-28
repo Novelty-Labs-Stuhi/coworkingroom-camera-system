@@ -28,6 +28,10 @@ min_track_age = 2       # frames a track must exist before its crossing counts (
 # YOLO inference resolution. 640 costs ~440 ms/frame on a CPU without AVX2 against
 # ~200 ms at 320, and a doorway sees people close up. Raise only if people are missed.
 detect_imgsz = 320
+buffer_capacity = 64        # frames the reader may bank while the models work
+face_workers = 4            # threads embedding faces concurrently
+motion_min_fraction = 0.004 # fraction of the frame that must change to run the models
+crop_padding = 0.35         # padding around the doorway line for the detection crop; 0 = whole frame
 
 [paths]
 gallery_dir = "gallery"

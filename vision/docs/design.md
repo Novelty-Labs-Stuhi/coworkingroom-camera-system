@@ -55,6 +55,55 @@ frame source ─▶ person tracker ─▶ TrackSession (per track, every frame)
   occupant wins only if it clears a **similarity threshold** AND beats the runner-up by
   a **margin** — else the exit is left unattributed rather than guessed.
 
+## Keeping up on a slow machine
+
+Measured on the deployment server (Xeon E5-1650, 2012, **no AVX2** — torch logs
+`Could not initialize NNPACK! Reason: Unsupported hardware` and falls back to its slowest
+kernels):
+
+| Stage | Before | After |
+|---|---|---|
+| YOLO @ imgsz 640 | 440 ms | — |
+| YOLO @ imgsz 320 | — | 204 ms |
+| InsightFace detection | 400 ms | 219 ms |
+| Live stream, end to end | 2.25 fps | — |
+
+At ~2 fps a doorway crossing lasting a second is seen once or twice, and `min_track_age`
+would reject it. The response is deliberately **not** to approximate the vision, but to
+stop wasting frames and stop looking where nothing happens:
+
+* **`BufferedSource`** — a reader thread drains the camera at full rate into a bounded
+  queue. This is the important one: previously every frame arriving *during* processing was
+  lost, so a one-second crossing yielded whatever we happened to be free for. Now it banks
+  ~12 frames and we may spend several seconds on them. Frames stay in order, so tracking is
+  unaffected; the cost is latency, which occupancy logging does not care about. The queue
+  drops its **oldest** frame when full, and counts drops.
+* **`MotionGate`** — an unchanged frame cannot contain a crossing, so it never reaches the
+  models. Idle cost falls to about a millisecond a frame. Hysteresis (`linger_frames`) keeps
+  the gate open briefly after movement so a person pausing mid-stride does not flicker it
+  shut and break their track. The reference is the previous frame, not a learned background:
+  a background model would absorb a stationary person, who is exactly who matters.
+* **`Region`** — detection runs on the crop around the doorway line. Boxes are translated
+  back to full-frame coordinates immediately, so nothing downstream can tell. That
+  translation is the one thing here that can silently corrupt results — get it wrong and
+  every box shifts by the crop offset, which looks exactly like a mis-drawn doorway line —
+  hence its own module and tests.
+* **Parallel face embedding** — per-person work is independent, so it runs on a thread pool
+  (onnxruntime releases the GIL). Tracking stays sequential because it must.
+* **`allowed_modules=['detection', 'recognition']`** — `buffalo_l` also ships 3D landmarks
+  (137 MB), 2D landmarks and gender/age, and `FaceAnalysis.get()` ran all of them on every
+  face.
+* **`tools/export_onnx.py`** — exports YOLO to ONNX, which avoids the NNPACK fallback
+  entirely and is usually faster on this class of CPU.
+
+`GatedTracker` composes the gate and the crop around any `Detector`, so the pipeline itself
+stays ignorant of all of it.
+
+**Still unmeasured:** ArcFace recognition (`w600k_r50`, 166 MB) has never run, because no
+frame with a face in it has reached the server yet. Per-person cost will be higher than the
+219 ms detection figure. Also unverified: the `det_size` reduction to 480, which landed at
+the same time as the module restriction, so their contributions are not separable.
+
 ## The labelling loop
 
 An unrecognised face is not a dead end — it is how the gallery grows. Every crossing is

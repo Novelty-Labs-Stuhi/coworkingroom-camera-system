@@ -12,9 +12,23 @@ raise it only if distant people are being missed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Protocol
+
 from .domain import Box, Frame, TrackedPerson
+from .gating import MotionGate
+from .region import Region
 
 _PERSON_CLASS = 0  # COCO class id for "person"
+
+# Builds the detection region once the frame size is known (width, height).
+RegionBuilder = Callable[[int, int], Region]
+
+
+class Detector(Protocol):
+    """Anything that turns a frame into tracked people."""
+
+    def update(self, frame: Frame) -> list[TrackedPerson]: ...
 
 
 class PersonTracker:
@@ -59,3 +73,45 @@ class PersonTracker:
         for track_id, (x1, y1, x2, y2) in zip(ids, coords, strict=True):
             people.append(TrackedPerson(track_id=track_id, box=Box(x1, y1, x2, y2)))
         return people
+
+
+class GatedTracker:
+    """A tracker wrapped in the two cost controls that make a slow machine keep up.
+
+    Both are skips rather than approximations, and both are invisible to callers:
+
+    * an unchanged frame cannot contain a crossing, so the motion gate returns no people
+      without running the model at all -- an empty doorway costs about a millisecond;
+    * detection runs only on the crop containing the doorway, and boxes are translated
+      back to full-frame coordinates before they are returned.
+
+    Omit both collaborators and this is a pass-through.
+    """
+
+    def __init__(
+        self,
+        tracker: Detector,
+        gate: MotionGate | None = None,
+        region_builder: RegionBuilder | None = None,
+    ) -> None:
+        self._tracker = tracker
+        self._gate = gate
+        self._region_builder = region_builder
+        self._region: Region | None = None
+
+    def update(self, frame: Frame) -> list[TrackedPerson]:
+        if self._gate is not None and not self._gate.is_active(frame.image):
+            return []
+        region = self._ensure_region(frame)
+        if region is None:
+            return self._tracker.update(frame)
+        cropped = Frame(timestamp=frame.timestamp, image=region.crop(frame.image))
+        return region.people_to_frame(self._tracker.update(cropped))
+
+    def _ensure_region(self, frame: Frame) -> Region | None:
+        if self._region_builder is None:
+            return None
+        if self._region is None:
+            height, width = frame.image.shape[:2]
+            self._region = self._region_builder(width, height)
+        return self._region

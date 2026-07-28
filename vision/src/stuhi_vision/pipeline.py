@@ -4,6 +4,9 @@ Each frame: track the people, let every track's session accumulate (recognise/em
 while they are in view), ask the doorway for crossings, and commit each crossing via
 the Doorkeeper. Sessions whose tracks vanish are pruned. This is the only place the
 stages are joined; each stays independently testable.
+
+Cost control lives in the detector, not here: see :class:`~.tracking.GatedTracker`, which
+skips still frames and crops to the doorway without the pipeline knowing.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from .doorway import DoorwayMonitor
 from .handlers import Doorkeeper
 from .sessions import SessionManager
 from .sources.base import FrameSource
-from .tracking import PersonTracker
+from .tracking import Detector
 
 # Announced after each committed crossing, with the evidence behind its identity.
 Announcer = Callable[[Sighting], None]
@@ -30,7 +33,7 @@ class Pipeline:
     def __init__(
         self,
         source: FrameSource,
-        tracker: PersonTracker,
+        tracker: Detector,
         doorway: DoorwayMonitor,
         sessions: SessionManager,
         doorkeeper: Doorkeeper,

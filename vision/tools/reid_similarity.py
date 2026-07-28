@@ -25,8 +25,8 @@ import numpy as np
 # Make the vision engine importable whether or not it was pip-installed.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from stuhi_vision.detection import PersonDetector  # noqa: E402
-from stuhi_vision.recognition.embeddings import normalize  # noqa: E402
+from stuhi_vision.detection import PersonDetector
+from stuhi_vision.recognition.embeddings import normalize
 
 
 # --- 1) Detect the person in a single frame ---------------------------------

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ..config import SourceConfig
 from .base import FrameSource
+from .buffered import BufferedSource
 from .stream import NetworkStreamSource
 from .video import VideoFileSource, WebcamSource
 
@@ -24,6 +25,7 @@ def open_source(config: SourceConfig) -> FrameSource:
 
 
 __all__ = [
+    "BufferedSource",
     "FrameSource",
     "NetworkStreamSource",
     "VideoFileSource",

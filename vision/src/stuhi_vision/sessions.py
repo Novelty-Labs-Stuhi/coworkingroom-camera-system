@@ -18,6 +18,7 @@ entry or an exit; sessions that never cross are pruned.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -26,7 +27,7 @@ from .domain import Frame, TrackedPerson
 from .identity import RunningIdentity
 from .quality import laplacian_sharpness
 from .recognition.body import BodyEmbedder
-from .recognition.face import FaceRecognizer
+from .recognition.face import FaceObservation, FaceRecognizer
 
 _MIN_CROP_SIDE = 40  # ignore crops smaller than this (too far / too little detail)
 _EXPIRY_GRACE = 30  # frames a track may be unseen before its session is dropped
@@ -59,12 +60,20 @@ class SessionManager:
         bodies: BodyEmbedder,
         face_match: float,
         face_margin: float,
+        face_workers: int = 4,
     ) -> None:
         self._faces = faces
         self._bodies = bodies
         self._face_match = face_match
         self._face_margin = face_margin
+        self._face_workers = max(1, face_workers)
+        self._pool: ThreadPoolExecutor | None = None
         self._sessions: dict[int, TrackSession] = {}
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
 
     def observe(self, frame: Frame, people: list[TrackedPerson], frame_index: int) -> None:
         for person in people:
@@ -78,9 +87,31 @@ class SessionManager:
                 )
                 self._sessions[person.track_id] = session
             session.last_frame = frame_index
-            if not _too_small(frame, person):
-                self._update_body(session, frame, person)
-                self._update_face(session, frame, person)
+
+        usable = [person for person in people if not _too_small(frame, person)]
+        # Face analysis is the expensive part and is independent per person, so run it
+        # concurrently; onnxruntime releases the GIL, so threads genuinely overlap.
+        # Session state is then folded in sequentially, keeping mutation single-threaded.
+        observations = self._analyze_faces(frame, usable)
+        for person, observation in zip(usable, observations, strict=True):
+            self._update_body(self._sessions[person.track_id], frame, person)
+            if observation is not None:
+                self._apply_face(self._sessions[person.track_id], frame, person, observation)
+
+    def _analyze_faces(
+        self, frame: Frame, people: list[TrackedPerson]
+    ) -> list[FaceObservation | None]:
+        if not people:
+            return []
+        if len(people) == 1 or self._face_workers == 1:
+            return [self._faces.analyze(frame.image, person.box) for person in people]
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(
+                max_workers=self._face_workers, thread_name_prefix="face"
+            )
+        return list(
+            self._pool.map(lambda person: self._faces.analyze(frame.image, person.box), people)
+        )
 
     def pop(self, track_id: int) -> TrackSession | None:
         return self._sessions.pop(track_id, None)
@@ -102,10 +133,13 @@ class SessionManager:
                 session.best_body_sharpness = sharpness
                 session.body_embedding = embedding
 
-    def _update_face(self, session: TrackSession, frame: Frame, person: TrackedPerson) -> None:
-        observation = self._faces.analyze(frame.image, person.box)
-        if observation is None:
-            return
+    def _apply_face(
+        self,
+        session: TrackSession,
+        frame: Frame,
+        person: TrackedPerson,
+        observation: FaceObservation,
+    ) -> None:
         if not session.identity.observe(self._faces.rank(observation.embedding)):
             return
         # This frame is the best look at the face so far -- keep everything from it.

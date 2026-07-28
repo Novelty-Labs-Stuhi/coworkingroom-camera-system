@@ -56,9 +56,7 @@ class ReidStore:
         data = {
             "threshold": self.threshold,
             "people": {
-                name: [
-                    {"video_id": e["video_id"], "emb": e["emb"].tolist()} for e in entries
-                ]
+                name: [{"video_id": e["video_id"], "emb": e["emb"].tolist()} for e in entries]
                 for name, entries in self.people.items()
             },
         }
