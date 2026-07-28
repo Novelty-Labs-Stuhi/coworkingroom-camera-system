@@ -40,6 +40,7 @@ def test_load_parses_all_sections(tmp_path: Path) -> None:
     assert cfg.thresholds.exit_margin == 0.05  # default preserved
     assert cfg.thresholds.min_track_age == 2  # default preserved
     assert cfg.performance.detect_imgsz == 320  # default preserved
+    assert cfg.performance.detect_model == "yolov8n.pt"  # default preserved
     assert cfg.thresholds.face_margin == 0.05  # default preserved
     assert cfg.paths.database == Path("data/x.db")
     assert cfg.paths.gallery_dir == Path("gallery")  # default preserved

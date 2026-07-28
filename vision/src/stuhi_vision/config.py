@@ -49,8 +49,12 @@ class Thresholds:
 class Performance:
     """Inference cost knobs. Measured, not guessed -- see docs/design.md."""
 
+    # YOLO weights. An ONNX export avoids the slow torch fallback on CPUs without AVX2
+    # and measured 160 ms/frame against 208 ms for the .pt -- see tools/export_onnx.py.
+    detect_model: str = "yolov8n.pt"
     # YOLO inference resolution: 640 costs ~440 ms/frame on a CPU without AVX2, 320
     # costs ~200 ms. A doorway sees people close up, so 320 is the sensible default.
+    # An ONNX export fixes this shape at export time -- keep the two in step.
     detect_imgsz: int = 320
     # Frames the reader thread may bank while the models work. This is what stops a slow
     # machine from *missing* a crossing; it trades latency for completeness.

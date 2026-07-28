@@ -75,6 +75,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         source=BufferedSource(open_source(config.source), performance.buffer_capacity),
         tracker=GatedTracker(
             PersonTracker(
+                model_path=performance.detect_model,
                 detection_conf=thresholds.detection_conf,
                 imgsz=performance.detect_imgsz,
             ),
