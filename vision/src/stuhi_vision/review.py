@@ -61,6 +61,12 @@ class ReviewRecord:
     name: str | None
     score: float
     labelled_as: str | None = None
+    # Place within a burst -- a group of people who crossed together with no clear gap.
+    # Their clips are cut from the same window and look alike, so the order they crossed in
+    # is the only thing distinguishing them, and it is how a whole group gets labelled at
+    # once. Defaults keep records written before this existed loadable.
+    position: int = 1
+    burst: int = 0
 
     @property
     def display_name(self) -> str:
@@ -89,7 +95,14 @@ class ReviewQueue:
         done.sort(key=lambda record: record.timestamp, reverse=True)
         return done[:limit]
 
-    def record(self, sighting: Sighting, encode_jpeg=None, clip: bytes | None = None) -> str:
+    def record(
+        self,
+        sighting: Sighting,
+        encode_jpeg=None,
+        clip: bytes | None = None,
+        position: int = 1,
+        burst: int = 0,
+    ) -> str:
         """File a sighting and return its id.
 
         ``encode_jpeg`` turns the crop into JPEG bytes; injected so this module needs no
@@ -112,6 +125,8 @@ class ReviewQueue:
             outcome=sighting.outcome.value,
             name=sighting.name,
             score=round(sighting.score, 4),
+            position=position,
+            burst=burst,
         )
         self._flush()
         return sighting_id
@@ -153,6 +168,30 @@ class ReviewQueue:
             self._gallery.save(self._gallery_dir)
             self._remember(record, name)
             return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
+
+    def label_burst(self, sighting_id: str, names: list[str]) -> list[tuple[str, LabelOutcome]]:
+        """Label everyone who crossed alongside ``sighting_id``, in crossing order.
+
+        ``names[0]`` goes to whoever crossed first, and so on. Extra names are ignored and
+        missing ones leave that person unlabelled, so a mistaken count cannot silently
+        attach the wrong name to somebody.
+        """
+        members = self.burst_members(sighting_id)
+        return [
+            (member.sighting_id, self.label(member.sighting_id, name))
+            for member, name in zip(members, names, strict=False)
+        ]
+
+    def burst_members(self, sighting_id: str) -> list[ReviewRecord]:
+        """Everyone who crossed in the same burst as this sighting, in crossing order."""
+        with self._lock:
+            record = self._records.get(sighting_id)
+            if record is None:
+                return []
+            if not record.burst:  # written before bursts existed: it stands alone
+                return [record]
+            members = [r for r in self._records.values() if r.burst == record.burst]
+        return sorted(members, key=lambda r: r.position)
 
     def _remember(self, record: ReviewRecord, name: str) -> None:
         self._records[record.sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": name})

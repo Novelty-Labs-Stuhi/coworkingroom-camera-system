@@ -31,9 +31,9 @@ _POLL_TIMEOUT = 30  # seconds held open by getUpdates; a long poll, not a busy l
 _ID_PREFIX = "id: "
 
 _HELP = (
-    "commands:\n"
-    "/label <sighting_id> <name> - enrol that face as <name>\n"
-    "/label <name> - same, as a reply to a sighting\n"
+    "to label: reply to a video and type the name.\n"
+    "several people at once: reply with their names in crossing order, e.g. a, b, c\n"
+    "\n"
     "/pending - sightings waiting for a label\n"
     "/people - enrolled faces per name"
 )
@@ -151,7 +151,14 @@ class TelegramNotifier:
 
     def _handle(self, message: dict) -> None:
         text = (message.get("text") or "").strip()
+        if not text:
+            return
         if not text.startswith("/"):
+            # A plain reply to a sighting is a label. Typing a name is the whole gesture --
+            # no command to remember -- and a comma-separated list names a whole group in
+            # the order they crossed. Plain text that is not a reply is ignored, so ordinary
+            # chatter cannot accidentally enrol a face.
+            self._handle_reply_label(message, text)
             return
         parts = text.split()
         command, args = parts[0].lstrip("/").lower(), parts[1:]
@@ -164,6 +171,46 @@ class TelegramNotifier:
             self._handle_people()
         else:
             self._send_message(_HELP)
+
+    def _handle_reply_label(self, message: dict, text: str) -> None:
+        """Label from a plain reply: one name, or several in crossing order."""
+        sighting_id = _sighting_id_from_reply(message)
+        if sighting_id is None:
+            return  # not a reply to a sighting; stay silent rather than guess
+        names = parse_names(text)
+        if not names:
+            return
+        if len(names) == 1:
+            self._report_label(sighting_id, names[0])
+            return
+
+        results = self._review.label_burst(sighting_id, names)
+        if not results:
+            self._send_message(f"unknown sighting id: {sighting_id}")
+            return
+        counts = self._review.counts()
+        lines = [
+            f"{position}. {name}: {outcome.value}"
+            for position, ((_id, outcome), name) in enumerate(zip(results, names, strict=False), 1)
+        ]
+        if len(names) > len(results):
+            lines.append(f"only {len(results)} crossed together; extra names ignored")
+        lines.append(", ".join(f"{n}={counts.get(n, 0)}" for n in dict.fromkeys(names)))
+        self._send_message("\n".join(lines))
+
+    def _report_label(self, sighting_id: str, name: str) -> None:
+        outcome = self._review.label(sighting_id, name)
+        counts = self._review.counts()
+        replies = {
+            LabelOutcome.ENROLLED: f"enrolled as {name} ({counts.get(name, 0)} reference(s))",
+            LabelOutcome.CORRECTED: f"corrected to {name} ({counts.get(name, 0)} reference(s))",
+            LabelOutcome.UNCHANGED: (
+                f"already labelled {name} -- nothing added, one sighting counts once"
+            ),
+            LabelOutcome.NO_FACE: f"no face was kept for {sighting_id} - nothing to enrol",
+            LabelOutcome.UNKNOWN_ID: f"unknown sighting id: {sighting_id}",
+        }
+        self._send_message(replies[outcome])
 
     def _handle_label(self, message: dict, args: list[str]) -> None:
         if len(args) >= 2:
@@ -178,18 +225,7 @@ class TelegramNotifier:
             self._send_message("usage: /label <sighting_id> <name>")
             return
 
-        outcome = self._review.label(sighting_id, name)
-        counts = self._review.counts()
-        replies = {
-            LabelOutcome.ENROLLED: f"enrolled as {name} ({counts.get(name, 0)} reference(s))",
-            LabelOutcome.CORRECTED: f"corrected to {name} ({counts.get(name, 0)} reference(s))",
-            LabelOutcome.UNCHANGED: (
-                f"already labelled {name} -- nothing added, one sighting counts once"
-            ),
-            LabelOutcome.NO_FACE: f"no face was kept for {sighting_id} - nothing to enrol",
-            LabelOutcome.UNKNOWN_ID: f"unknown sighting id: {sighting_id}",
-        }
-        self._send_message(replies[outcome])
+        self._report_label(sighting_id, name)
 
     def _handle_pending(self) -> None:
         records = self._review.pending()
@@ -208,6 +244,21 @@ class TelegramNotifier:
             self._send_message("gallery is empty - label a sighting to enrol someone")
             return
         self._send_message("\n".join(f"{name}: {count}" for name, count in counts.items()))
+
+
+def parse_names(text: str) -> list[str]:
+    """Read one or more names from a plain reply.
+
+    Accepts ``ilari``, ``a, b, c`` and ``[a, b, c]`` -- people write the list either way,
+    and the brackets carry no meaning. Commas separate, so a name may contain spaces.
+    Anything command-like is refused, so a mistyped ``/pending`` cannot enrol a face
+    called "pending".
+    """
+    cleaned = text.strip().strip("[]").strip()
+    if not cleaned or cleaned.startswith("/"):
+        return []
+    names = [part.strip() for part in cleaned.split(",")]
+    return [name for name in names if name and not name.startswith("/")]
 
 
 def _caption(sighting: Sighting, sighting_id: str, position: int = 1, total: int = 1) -> str:
@@ -232,7 +283,7 @@ def _caption(sighting: Sighting, sighting_id: str, position: int = 1, total: int
     lines.append(f"{sighting.direction.value}: {who}")
     lines.append(f"{_ID_PREFIX}{sighting_id}")
     if sighting.outcome is Outcome.UNKNOWN:
-        lines.append("reply: /label <name>")
+        lines.append("reply with the name" + (", or names in order" if total > 1 else ""))
     return "\n".join(lines)
 
 
