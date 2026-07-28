@@ -67,6 +67,9 @@ class Performance:
     # Fraction of the frame padded around the doorway line to form the detection crop.
     # 0 disables cropping and runs detection on the whole frame.
     crop_padding: float = 0.35
+    # Frames kept for the clip sent with each crossing. Held as JPEG (~14 KB each), so a
+    # few seconds of history is cheap.
+    clip_frames: int = 48
 
 
 @dataclass(frozen=True, slots=True)

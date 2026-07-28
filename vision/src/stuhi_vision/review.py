@@ -63,11 +63,12 @@ class ReviewQueue:
         self._load()
 
     # --- recording ----------------------------------------------------------
-    def record(self, sighting: Sighting, encode_jpeg=None) -> str:
+    def record(self, sighting: Sighting, encode_jpeg=None, clip: bytes | None = None) -> str:
         """File a sighting and return its id.
 
         ``encode_jpeg`` turns the crop into JPEG bytes; injected so this module needs no
-        image library (and so tests need no OpenCV).
+        image library (and so tests need no OpenCV). ``clip`` is an optional MP4 of the
+        moment, kept alongside so a human can see what happened rather than only a crop.
         """
         sighting_id = self._next_id(sighting.timestamp)
         if sighting.face_embedding is not None:
@@ -76,6 +77,8 @@ class ReviewQueue:
             jpeg = encode_jpeg(sighting.face_crop)
             if jpeg:
                 (self._dir / f"{sighting_id}.jpg").write_bytes(jpeg)
+        if clip:
+            (self._dir / f"{sighting_id}.mp4").write_bytes(clip)
         self._records[sighting_id] = ReviewRecord(
             sighting_id=sighting_id,
             timestamp=sighting.timestamp,
@@ -116,6 +119,10 @@ class ReviewQueue:
     # --- queries ------------------------------------------------------------
     def crop_path(self, sighting_id: str) -> Path | None:
         path = self._dir / f"{sighting_id}.jpg"
+        return path if path.exists() else None
+
+    def clip_path(self, sighting_id: str) -> Path | None:
+        path = self._dir / f"{sighting_id}.mp4"
         return path if path.exists() else None
 
     def pending(self, limit: int = 20) -> list[ReviewRecord]:

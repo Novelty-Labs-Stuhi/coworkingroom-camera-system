@@ -60,16 +60,37 @@ class TelegramNotifier:
 
     # --- outbound -----------------------------------------------------------
     def announce(self, sighting: Sighting, sighting_id: str) -> None:
-        """Post one crossing. Never raises -- a chat outage must not stop the pipeline."""
+        """Post one crossing. Never raises -- a chat outage must not stop the pipeline.
+
+        A clip of the moment is preferred when there is one: it shows which way the person
+        went and whether anyone came through with them. The face crop follows separately,
+        because a still is the better thing to look at when deciding a label.
+        """
         caption = _caption(sighting, sighting_id)
+        clip = self._review.clip_path(sighting_id)
         crop = self._review.crop_path(sighting_id)
         try:
-            if crop is not None:
+            if clip is not None:
+                self._send_video(clip, caption)
+                if crop is not None:
+                    self._send_photo(crop, f"face for {sighting_id}")
+            elif crop is not None:
                 self._send_photo(crop, caption)
             else:
                 self._send_message(caption)
         except Exception as exc:
             print(f"  -> telegram send failed: {exc}")
+
+    def _send_video(self, path: Path, caption: str) -> None:
+        self._client.post(
+            _API.format(token=self._token, method="sendVideo"),
+            data={
+                "chat_id": self._chat_id,
+                "caption": caption,
+                "supports_streaming": "true",
+            },
+            files={"video": (path.name, path.read_bytes(), "video/mp4")},
+        )
 
     def send_test(self, text: str) -> None:
         """Send one message, letting errors surface -- used to verify the credentials."""

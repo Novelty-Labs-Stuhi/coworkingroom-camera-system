@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .clips import ClipRecorder
 from .config import Config
 from .domain import Sighting
 from .doorway import DoorwayMonitor
@@ -71,8 +72,15 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         notifier = TelegramNotifier(config.telegram.bot_token, config.telegram.chat_id, review)
         notifier.start()
 
+    # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
+    # frames that happened to follow the commit.
+    recorder = ClipRecorder(encode_jpeg, capacity=performance.clip_frames)
+    source = _recorded(
+        BufferedSource(open_source(config.source), performance.buffer_capacity), recorder
+    )
+
     pipeline = Pipeline(
-        source=BufferedSource(open_source(config.source), performance.buffer_capacity),
+        source=source,
         tracker=GatedTracker(
             PersonTracker(
                 model_path=performance.detect_model,
@@ -85,7 +93,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         doorway=DoorwayMonitor(config.doorway),
         sessions=sessions,
         doorkeeper=doorkeeper,
-        announce=_reporter(review, notifier, announce),
+        announce=_reporter(review, notifier, announce, recorder),
         on_frame=observer,
     )
     return Application(
@@ -109,11 +117,27 @@ def _region_builder(config: Config):
     return build_region
 
 
-def _reporter(review: ReviewQueue, notifier: TelegramNotifier | None, announce):
-    """File every sighting for review, notify the chat, then hand it to the caller."""
+def _recorded(source, recorder: ClipRecorder):
+    """Pass frames through, remembering each one so a clip can be cut from the window."""
+
+    def frames():
+        for frame in source:
+            recorder.add(frame.image)
+            yield frame
+
+    return frames()
+
+
+def _reporter(
+    review: ReviewQueue,
+    notifier: TelegramNotifier | None,
+    announce,
+    recorder: ClipRecorder,
+):
+    """File every sighting with a clip of the moment, notify the chat, then hand it on."""
 
     def report(sighting: Sighting) -> None:
-        sighting_id = review.record(sighting, encode_jpeg=encode_jpeg)
+        sighting_id = review.record(sighting, encode_jpeg=encode_jpeg, clip=recorder.encode())
         if notifier is not None:
             notifier.announce(sighting, sighting_id)
         announce(sighting)
