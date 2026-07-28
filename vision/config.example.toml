@@ -19,7 +19,7 @@ inside_side = "left"
 [thresholds]
 detection_conf = 0.4    # minimum YOLO confidence to treat a detection as a person
 face_match = 0.35       # minimum cosine similarity to accept a face as a known person
-face_clarity_min = 0.5  # face clarity "good enough" to lock identity early (0..1)
+face_margin = 0.05      # best name must beat the runner-up by this, else "unknown"
 exit_similarity = 0.6   # minimum cosine similarity to link an exit to an occupant
 exit_margin = 0.05      # winner must beat the runner-up by this, else exit is ambiguous
 min_track_age = 3       # frames a track must exist before its crossing counts (anti-flicker)

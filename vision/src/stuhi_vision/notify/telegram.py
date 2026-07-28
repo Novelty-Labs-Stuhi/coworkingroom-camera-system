@@ -1,0 +1,198 @@
+"""Telegram channel: announce who came and went, and take labels back.
+
+Announcing is a push; labelling is a pull. So the notifier does both:
+
+* :meth:`TelegramNotifier.announce` posts each crossing -- the face crop when there is
+  one, captioned with the name or ``unknown``, the score, and the sighting id;
+* :meth:`TelegramNotifier.start` runs a background thread long-polling ``getUpdates`` for
+  commands, so a reply in the chat enrols or corrects a face.
+
+Commands (mirroring the older clip receiver, so the habits carry over)::
+
+    /label <sighting_id> <name>   enrol that sighting's face as <name>
+    /label <name>                 same, as a reply to the sighting's message
+    /pending                      sightings still waiting for a label
+    /people                       enrolled reference vectors per name
+
+Labelling an already-labelled sighting corrects it. The bot token and chat id come from
+the environment, never from the config file, so they cannot be committed.
+"""
+
+from __future__ import annotations
+
+import threading
+from pathlib import Path
+
+from ..domain import Outcome, Sighting
+from ..review import ReviewQueue
+
+_API = "https://api.telegram.org/bot{token}/{method}"
+_POLL_TIMEOUT = 30  # seconds held open by getUpdates; a long poll, not a busy loop
+_ID_PREFIX = "id: "
+
+_HELP = (
+    "commands:\n"
+    "/label <sighting_id> <name> - enrol that face as <name>\n"
+    "/label <name> - same, as a reply to a sighting\n"
+    "/pending - sightings waiting for a label\n"
+    "/people - enrolled faces per name"
+)
+
+
+class TelegramNotifier:
+    """Posts sightings to a chat and applies labels replied back from it."""
+
+    def __init__(self, token: str, chat_id: str, review: ReviewQueue) -> None:
+        self._token = token
+        self._chat_id = chat_id
+        self._review = review
+        self._http = None  # httpx is an optional extra; imported on first use
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    @property
+    def _client(self):
+        if self._http is None:
+            import httpx
+
+            self._http = httpx.Client(timeout=_POLL_TIMEOUT + 30)
+        return self._http
+
+    # --- outbound -----------------------------------------------------------
+    def announce(self, sighting: Sighting, sighting_id: str) -> None:
+        """Post one crossing. Never raises -- a chat outage must not stop the pipeline."""
+        caption = _caption(sighting, sighting_id)
+        crop = self._review.crop_path(sighting_id)
+        try:
+            if crop is not None:
+                self._send_photo(crop, caption)
+            else:
+                self._send_message(caption)
+        except Exception as exc:
+            print(f"  -> telegram send failed: {exc}")
+
+    def _send_photo(self, path: Path, caption: str) -> None:
+        self._client.post(
+            _API.format(token=self._token, method="sendPhoto"),
+            data={"chat_id": self._chat_id, "caption": caption},
+            files={"photo": (path.name, path.read_bytes(), "image/jpeg")},
+        )
+
+    def _send_message(self, text: str) -> None:
+        self._client.post(
+            _API.format(token=self._token, method="sendMessage"),
+            data={"chat_id": self._chat_id, "text": text},
+        )
+
+    # --- inbound ------------------------------------------------------------
+    def start(self) -> None:
+        """Begin polling for label commands in a background thread."""
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._poll, name="telegram-poll", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=_POLL_TIMEOUT + 5)
+            self._thread = None
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+
+    def _poll(self) -> None:
+        offset = 0
+        while not self._stop.is_set():
+            try:
+                response = self._client.get(
+                    _API.format(token=self._token, method="getUpdates"),
+                    params={"offset": offset, "timeout": _POLL_TIMEOUT},
+                )
+                for update in response.json().get("result", []):
+                    offset = update["update_id"] + 1
+                    message = update.get("message")
+                    if message:
+                        self._handle(message)
+            except Exception as exc:
+                print(f"  -> telegram poll error: {exc}")
+                self._stop.wait(5)
+
+    def _handle(self, message: dict) -> None:
+        text = (message.get("text") or "").strip()
+        if not text.startswith("/"):
+            return
+        parts = text.split()
+        command, args = parts[0].lstrip("/").lower(), parts[1:]
+
+        if command == "label":
+            self._handle_label(message, args)
+        elif command == "pending":
+            self._handle_pending()
+        elif command == "people":
+            self._handle_people()
+        else:
+            self._send_message(_HELP)
+
+    def _handle_label(self, message: dict, args: list[str]) -> None:
+        if len(args) >= 2:
+            sighting_id, name = args[0], " ".join(args[1:])
+        elif len(args) == 1:
+            replied_id = _sighting_id_from_reply(message)
+            if replied_id is None:
+                self._send_message("reply to a sighting, or: /label <sighting_id> <name>")
+                return
+            sighting_id, name = replied_id, args[0]
+        else:
+            self._send_message("usage: /label <sighting_id> <name>")
+            return
+
+        if self._review.label(sighting_id, name):
+            self._send_message(f"enrolled {sighting_id} as {name}")
+        else:
+            self._send_message(f"nothing to enrol for {sighting_id}")
+
+    def _handle_pending(self) -> None:
+        records = self._review.pending()
+        if not records:
+            self._send_message("nothing waiting for a label")
+            return
+        lines = [
+            f"{record.sighting_id}  {record.direction}  {record.display_name} ({record.score:.2f})"
+            for record in records
+        ]
+        self._send_message("\n".join(lines))
+
+    def _handle_people(self) -> None:
+        counts = self._review.counts()
+        if not counts:
+            self._send_message("gallery is empty - label a sighting to enrol someone")
+            return
+        self._send_message("\n".join(f"{name}: {count}" for name, count in counts.items()))
+
+
+def _caption(sighting: Sighting, sighting_id: str) -> str:
+    """The message body: who, which way, how sure, and the id to reply with."""
+    if sighting.outcome is Outcome.NAMED:
+        who = f"{sighting.name} ({sighting.score:.2f})"
+    elif sighting.name is not None:
+        # An exit shows no face, so the name came from the ledger linking it to an occupant.
+        who = f"{sighting.name} (linked)"
+    elif sighting.outcome is Outcome.UNKNOWN:
+        who = f"unknown (best {sighting.score:.2f})"
+    else:
+        who = "no face seen"
+    lines = [f"{sighting.direction.value}: {who}", f"{_ID_PREFIX}{sighting_id}"]
+    if sighting.outcome is Outcome.UNKNOWN:
+        lines.append("reply: /label <name>")
+    return "\n".join(lines)
+
+
+def _sighting_id_from_reply(message: dict) -> str | None:
+    """Pull the sighting id out of the caption of the message being replied to."""
+    replied = message.get("reply_to_message", {})
+    body = replied.get("caption") or replied.get("text") or ""
+    for line in body.splitlines():
+        if line.startswith(_ID_PREFIX):
+            return line[len(_ID_PREFIX) :].strip()
+    return None

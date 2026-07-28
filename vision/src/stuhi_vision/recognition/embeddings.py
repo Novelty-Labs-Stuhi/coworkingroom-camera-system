@@ -31,6 +31,21 @@ class Match:
     score: float
 
 
+def rank(query: np.ndarray, gallery: Mapping[str, Sequence[np.ndarray]]) -> list[Match]:
+    """Every gallery name scored against ``query``, best first.
+
+    Unlike :func:`nearest` no threshold is applied: the caller decides what counts as a
+    match. Returning the runner-up too is what lets a caller demand a *margin*, which is
+    how a stranger (close to nobody in particular) is told apart from a known person
+    (distinctly closest to themselves).
+    """
+    matches = [
+        Match(name=name, score=max((cosine(query, ref) for ref in references), default=-1.0))
+        for name, references in gallery.items()
+    ]
+    return sorted(matches, key=lambda match: match.score, reverse=True)
+
+
 def nearest(
     query: np.ndarray,
     gallery: Mapping[str, Sequence[np.ndarray]],

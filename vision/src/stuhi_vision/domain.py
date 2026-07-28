@@ -21,6 +21,14 @@ class Direction(Enum):
     OUT = "out"
 
 
+class Outcome(Enum):
+    """How confidently a crossing was attributed to a person."""
+
+    NAMED = "named"  # matched the gallery above threshold, with a margin
+    UNKNOWN = "unknown"  # a face was seen but matched nobody -- enrollable
+    UNIDENTIFIED = "unidentified"  # never got a usable face; no claim made
+
+
 @dataclass(frozen=True, slots=True)
 class Box:
     """An axis-aligned bounding box in pixel coordinates."""
@@ -73,6 +81,23 @@ class Crossing:
     track_id: int
     direction: Direction
     timestamp: float
+
+
+@dataclass(frozen=True, slots=True)
+class Sighting:
+    """A committed crossing, with the evidence behind its identity.
+
+    Carries the face embedding and crop of the frame that produced the best match, so an
+    ``UNKNOWN`` sighting can later be labelled and enrolled into the gallery.
+    """
+
+    timestamp: float
+    direction: Direction
+    name: str | None
+    score: float
+    outcome: Outcome
+    face_embedding: np.ndarray | None = None
+    face_crop: np.ndarray | None = None
 
 
 @dataclass(frozen=True, slots=True)

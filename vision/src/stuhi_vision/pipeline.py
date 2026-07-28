@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from .domain import Crossing, Direction, Frame, TrackedPerson
+from .domain import Crossing, Frame, Sighting, TrackedPerson
 from .doorway import DoorwayMonitor
 from .handlers import Doorkeeper
 from .sessions import SessionManager
 from .sources.base import FrameSource
 from .tracking import PersonTracker
 
-# Announced after each committed crossing: (direction, attributed name or None).
-Announcer = Callable[[Direction, str | None], None]
+# Announced after each committed crossing, with the evidence behind its identity.
+Announcer = Callable[[Sighting], None]
 
 # Called once per frame with everything computed for it (e.g. to draw an overlay).
 FrameObserver = Callable[[Frame, list[TrackedPerson], list[Crossing]], None]
@@ -42,7 +42,7 @@ class Pipeline:
         self._doorway = doorway
         self._sessions = sessions
         self._doorkeeper = doorkeeper
-        self._announce = announce or (lambda direction, name: None)
+        self._announce = announce or (lambda sighting: None)
         self._on_frame = on_frame
 
     def run(self) -> None:
@@ -51,9 +51,9 @@ class Pipeline:
             self._sessions.observe(frame, people, frame_index)
             crossings = self._doorway.update(people, frame)
             for crossing in crossings:
-                result = self._doorkeeper.commit(crossing)
-                if result is not None:
-                    self._announce(*result)
+                sighting = self._doorkeeper.commit(crossing)
+                if sighting is not None:
+                    self._announce(sighting)
             self._sessions.prune({person.track_id for person in people}, frame_index)
             if self._on_frame is not None:
                 self._on_frame(frame, people, crossings)

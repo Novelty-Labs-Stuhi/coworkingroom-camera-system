@@ -4,16 +4,21 @@ A crossing is the only thing that marks someone in or out. When one fires, the
 Doorkeeper takes that track's accumulated session and:
 
 * rejects it if the track is too young (anti-flicker persistence gate);
-* on the way IN, records the recognised name (or a fresh guest label) plus the stored
-  entry embedding;
-* on the way OUT, asks the ledger to link the body embedding to whoever is inside.
+* on the way IN, resolves the identity from the track's running best face match (or a
+  fresh guest label when nothing matched) and records it with the entry embedding;
+* on the way OUT, asks the ledger to link the body embedding to whoever is inside, since
+  a person walking away shows no face.
+
+It returns a :class:`~.domain.Sighting` carrying the evidence -- score, outcome, face crop
+-- so the crossing can be announced and, if unrecognised, labelled later.
 """
 
 from __future__ import annotations
 
-from .domain import Crossing, Direction
+from .domain import Crossing, Direction, Outcome, Sighting
+from .identity import Decision
 from .ledger import Ledger
-from .sessions import SessionManager
+from .sessions import SessionManager, TrackSession
 
 
 class Doorkeeper:
@@ -25,24 +30,37 @@ class Doorkeeper:
         self._min_track_age = min_track_age
         self._guests = 0
 
-    def commit(self, crossing: Crossing) -> tuple[Direction, str | None] | None:
-        """Apply a crossing; returns (direction, name) or ``None`` if it was rejected."""
+    def commit(self, crossing: Crossing) -> Sighting | None:
+        """Apply a crossing; returns the sighting, or ``None`` if it was rejected."""
         session = self._sessions.pop(crossing.track_id)
         if session is None or session.age < self._min_track_age:
             return None  # flicker / not a confident person pass-through
-        if crossing.direction is Direction.IN:
-            return Direction.IN, self._enter(session, crossing.timestamp)
-        return Direction.OUT, self._exit(session, crossing.timestamp)
 
-    def _enter(self, session, timestamp: float) -> str:
-        name = session.name or self._new_guest()
+        decision = session.identity.decide()
+        if crossing.direction is Direction.IN:
+            name = self._enter(session, decision, crossing.timestamp)
+        else:
+            name = self._exit(session, crossing.timestamp)
+
+        return Sighting(
+            timestamp=crossing.timestamp,
+            direction=crossing.direction,
+            name=name,
+            score=decision.score,
+            outcome=decision.outcome,
+            face_embedding=session.face_embedding,
+            face_crop=session.face_crop,
+        )
+
+    def _enter(self, session: TrackSession, decision: Decision, timestamp: float) -> str:
+        name = decision.name if decision.outcome is Outcome.NAMED else self._new_guest()
         embedding = session.entry_embedding
         if embedding is None:
-            embedding = session.body_embedding  # no clear-face frame; use the sharpest body
+            embedding = session.body_embedding  # no face frame; use the sharpest body
         self._ledger.enter(name, embedding, timestamp)
         return name
 
-    def _exit(self, session, timestamp: float) -> str | None:
+    def _exit(self, session: TrackSession, timestamp: float) -> str | None:
         return self._ledger.exit(session.body_embedding, timestamp)
 
     def _new_guest(self) -> str:

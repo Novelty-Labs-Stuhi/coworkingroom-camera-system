@@ -7,6 +7,7 @@ dependency-injected.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,7 +34,7 @@ class DoorwayConfig:
 class Thresholds:
     detection_conf: float = 0.4  # min YOLO confidence for a person
     face_match: float = 0.35  # min cosine to accept a face as a known person
-    face_clarity_min: float = 0.5  # face clarity that is "good enough" to lock identity early
+    face_margin: float = 0.05  # best name must beat the runner-up by this, else unknown
     exit_similarity: float = 0.6  # min cosine to link an exit to an occupant
     exit_margin: float = 0.05  # best occupant must beat the runner-up by this, else ambiguous
     min_track_age: int = 3  # frames a track must exist before its crossing counts (anti-flicker)
@@ -43,6 +44,26 @@ class Thresholds:
 class Paths:
     gallery_dir: Path = Path("gallery")
     database: Path = Path("data/occupancy.db")
+    review_dir: Path = Path("data/review")  # sighting crops/embeddings awaiting a label
+
+
+@dataclass(frozen=True, slots=True)
+class Telegram:
+    """Bot credentials, read from the environment so they are never committed."""
+
+    bot_token: str | None = None
+    chat_id: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
+
+    @classmethod
+    def from_env(cls) -> Telegram:
+        return cls(
+            bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
+            chat_id=os.environ.get("TELEGRAM_CHAT_ID"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +72,7 @@ class Config:
     doorway: DoorwayConfig
     thresholds: Thresholds = field(default_factory=Thresholds)
     paths: Paths = field(default_factory=Paths)
+    telegram: Telegram = field(default_factory=Telegram.from_env)
 
 
 def _point(raw: list[float]) -> Point:
@@ -74,5 +96,6 @@ def load(path: str | Path) -> Config:
     paths = Paths(
         gallery_dir=Path(paths_raw.get("gallery_dir", "gallery")),
         database=Path(paths_raw.get("database", "data/occupancy.db")),
+        review_dir=Path(paths_raw.get("review_dir", "data/review")),
     )
     return Config(source=source, doorway=doorway, thresholds=thresholds, paths=paths)

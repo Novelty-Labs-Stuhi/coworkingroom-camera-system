@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from . import assembly, config
-from .domain import Box, Direction
+from .domain import Box, Direction, Sighting
 from .recognition.face import FaceRecognizer
 from .recognition.gallery import FaceGallery
 from .store import EventStore
@@ -18,11 +18,10 @@ app = typer.Typer(help="Single-camera, face-based occupancy tracking for the stu
 ConfigOption = Annotated[Path, typer.Option("--config", "-c", help="Path to the TOML config.")]
 
 
-def _announce(direction: Direction, name: str | None) -> None:
-    if direction is Direction.IN:
-        typer.echo(f"[in ]  {name} entered")
-    else:
-        typer.echo(f"[out]  {name or '(unresolved)'} left")
+def _announce(sighting: Sighting) -> None:
+    who = sighting.name or f"({sighting.outcome.value})"
+    verb = "entered" if sighting.direction is Direction.IN else "left"
+    typer.echo(f"[{sighting.direction.value:<3}]  {who} {verb}  score={sighting.score:.2f}")
 
 
 @app.command()
@@ -34,7 +33,7 @@ def run(config_path: ConfigOption = Path("config.toml")) -> None:
     except KeyboardInterrupt:
         typer.echo("stopped")
     finally:
-        application.store.close()
+        application.close()
 
 
 @app.command()
@@ -67,7 +66,7 @@ def review(
         application.pipeline.run()
     finally:
         annotator.close()
-        application.store.close()
+        application.close()
     typer.echo(f"wrote {output}")
 
 

@@ -24,29 +24,60 @@ face gives the durable identity; the body carries that identity to the exit.
 
 ```
 frame source ─▶ person tracker ─▶ TrackSession (per track, every frame)
-(file/webcam/     (YOLO +           • best-face-so-far → "good enough" → recognise + lock
+(file/webcam/     (YOLO +           • RunningIdentity → best face-vs-gallery score so far
  ESP32 stream)     ByteTrack)        • sharpest body crop → lighting-normalised embedding
                           │
                           ▼
                   doorway monitor ─┬─ IN  ─▶ Doorkeeper ─▶ ledger.enter ─▶ store
-                  (foot crosses    │        (name + entry embedding)
+                  (foot crosses    │        (name + entry embedding)   └▶ ReviewQueue
                    the line +      └─ OUT ─▶ Doorkeeper ─▶ ledger.exit  ─▶ store
-                   persistence)             (body → best-pair match)
+                   persistence)             (body → best-pair match)      └▶ Telegram
 ```
 
-* **Recognition runs online, every frame** — not at the crossing. A `TrackSession`
-  accumulates per track: the first face clear enough ("good enough" clarity) locks the
-  identity early (low latency), and its frame's body crop becomes the stored entry
-  embedding; the sharpest body crop is kept as the exit query / fallback.
+* **Recognition runs online, every frame** — not at the crossing. A `TrackSession` keeps a
+  `RunningIdentity`: the **highest** face-vs-gallery cosine seen across the track, plus the
+  embedding and crop of the frame that produced it. There is no separate clarity gate — for
+  the correct person a clearer, more frontal face simply scores higher, so the running
+  maximum already prefers the best look. Clarity is still measured and stored as diagnostic
+  metadata for tuning the thresholds.
 * **Only a crossing commits** an in/out. Direction is pure geometry (the foot point's
   side of the line flips), so the head-count is right even when identity is uncertain.
   A **persistence gate** (min track age) rejects one-frame flicker. Sessions that never
   cross are pruned.
+* **Three identity outcomes**, decided at the crossing: `NAMED` (cleared the threshold *and*
+  beat the runner-up by `face_margin`), `UNKNOWN` (a face was seen but matched nobody), and
+  `UNIDENTIFIED` (no usable face). The margin is what separates "this is a stranger", who is
+  mediocre against everyone, from "a bad look at someone I know". An unmatched person is
+  never force-matched to the closest name.
 * **Lighting normalization** (CLAHE) is applied to every body crop before embedding, so
   the same person embeds similarly under different lighting.
 * **Exit attribution**: *elimination* when one person is inside; otherwise the closest
   occupant wins only if it clears a **similarity threshold** AND beats the runner-up by
   a **margin** — else the exit is left unattributed rather than guessed.
+
+## The labelling loop
+
+An unrecognised face is not a dead end — it is how the gallery grows. Every crossing is
+filed in a `ReviewQueue` with its face embedding and crop, and announced to Telegram. A
+reply enrols it:
+
+```
+/label <sighting_id> <name>    or, as a reply to the sighting:  /label <name>
+/pending                       sightings still waiting for a label
+/people                        enrolled reference vectors per name
+```
+
+Labelling an already-labelled sighting **corrects** it: the embedding is removed from the
+wrong name before being added to the right one, so a single mistake does not poison the
+gallery permanently. This is why `FaceGallery.save` also deletes the files of names that
+have been emptied — otherwise a reload would resurrect the wrong label.
+
+The bot token and chat id are read from `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` in the
+environment, never from the config file, so they cannot be committed. With them unset the
+pipeline runs exactly as before, just without announcements.
+
+One honest limitation: relabelling teaches the gallery and fixes the review record, but it
+does **not** rewrite the SQLite occupancy event, which keeps the name it was recorded with.
 
 ## Why these boundaries
 

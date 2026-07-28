@@ -1,13 +1,16 @@
 """Per-track accumulation while a person is in view.
 
-Recognition and embedding run every frame for everyone visible -- no entry/exit role
-is assumed. Each track carries a :class:`TrackSession` that keeps:
+Recognition and embedding run every frame for everyone visible -- no entry/exit role is
+assumed. Each track carries a :class:`TrackSession` that keeps:
 
-* the best-face-so-far -> once a frame's face clarity is "good enough" the identity is
-  recognized and locked (early accept, low latency); the body embedding from that same
-  clear frame becomes the stored entry embedding;
-* the sharpest body crop seen -> used as the exit query (and as an entry fallback when
-  no clear face was ever seen).
+* a :class:`~.identity.RunningIdentity` -> the best face match seen so far, plus the
+  embedding and crop of the frame that produced it (kept so an unrecognised face can be
+  labelled and enrolled afterwards);
+* the sharpest body crop seen -> used as the exit query, since a person walking away
+  shows no face.
+
+Face clarity is still measured, but only recorded as diagnostic metadata -- it is not a
+gate. See :mod:`.identity` for why the running maximum makes a separate gate unnecessary.
 
 Nothing is committed here. The doorway crossing decides whether a session becomes an
 entry or an exit; sessions that never cross are pruned.
@@ -15,11 +18,12 @@ entry or an exit; sessions that never cross are pruned.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from .domain import Frame, TrackedPerson
+from .identity import RunningIdentity
 from .quality import laplacian_sharpness
 from .recognition.body import BodyEmbedder
 from .recognition.face import FaceRecognizer
@@ -33,10 +37,11 @@ class TrackSession:
     track_id: int
     first_frame: int
     last_frame: int
-    name: str | None = None
-    locked: bool = False  # a good-enough face was seen; stop re-recognising
-    best_face_clarity: float = -1.0
-    entry_embedding: np.ndarray | None = None  # body embed from the clearest-face frame
+    identity: RunningIdentity = field(default_factory=lambda: RunningIdentity(0.0, 0.0))
+    best_face_clarity: float = -1.0  # metadata only, for tuning the thresholds later
+    face_embedding: np.ndarray | None = None  # face from the best-scoring frame
+    face_crop: np.ndarray | None = None  # that same frame's crop, for labelling
+    entry_embedding: np.ndarray | None = None  # body embed from the best-scoring frame
     best_body_sharpness: float = -1.0
     body_embedding: np.ndarray | None = None  # sharpest body crop (exit query / fallback)
 
@@ -49,24 +54,33 @@ class SessionManager:
     """Owns the live sessions and updates them each frame."""
 
     def __init__(
-        self, faces: FaceRecognizer, bodies: BodyEmbedder, face_clarity_min: float
+        self,
+        faces: FaceRecognizer,
+        bodies: BodyEmbedder,
+        face_match: float,
+        face_margin: float,
     ) -> None:
         self._faces = faces
         self._bodies = bodies
-        self._clarity_min = face_clarity_min
+        self._face_match = face_match
+        self._face_margin = face_margin
         self._sessions: dict[int, TrackSession] = {}
 
     def observe(self, frame: Frame, people: list[TrackedPerson], frame_index: int) -> None:
         for person in people:
             session = self._sessions.get(person.track_id)
             if session is None:
-                session = TrackSession(person.track_id, frame_index, frame_index)
+                session = TrackSession(
+                    person.track_id,
+                    frame_index,
+                    frame_index,
+                    identity=RunningIdentity(self._face_match, self._face_margin),
+                )
                 self._sessions[person.track_id] = session
             session.last_frame = frame_index
             if not _too_small(frame, person):
                 self._update_body(session, frame, person)
-                if not session.locked:
-                    self._update_face(session, frame, person)
+                self._update_face(session, frame, person)
 
     def pop(self, track_id: int) -> TrackSession | None:
         return self._sessions.pop(track_id, None)
@@ -92,13 +106,13 @@ class SessionManager:
         observation = self._faces.analyze(frame.image, person.box)
         if observation is None:
             return
-        if observation.clarity > session.best_face_clarity:
-            session.best_face_clarity = observation.clarity
-            match = self._faces.match(observation.embedding)
-            session.name = match.name if match is not None else None
-            session.entry_embedding = self._bodies.embed(frame.image, person.box)
-        if observation.clarity >= self._clarity_min:
-            session.locked = True  # good enough -- accept early and stop re-recognising
+        if not session.identity.observe(self._faces.rank(observation.embedding)):
+            return
+        # This frame is the best look at the face so far -- keep everything from it.
+        session.best_face_clarity = observation.clarity
+        session.face_embedding = observation.embedding
+        session.face_crop = person.box.crop(frame.image).copy()
+        session.entry_embedding = self._bodies.embed(frame.image, person.box)
 
 
 def _too_small(frame: Frame, person: TrackedPerson) -> bool:

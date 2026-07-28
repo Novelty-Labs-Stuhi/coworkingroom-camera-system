@@ -64,6 +64,14 @@ class FaceRecognizer:
         """Match a face embedding against the gallery (or ``None`` if unknown)."""
         return self._gallery.match(embedding, self._threshold)
 
+    def rank(self, embedding: np.ndarray) -> list[Match]:
+        """Every enrolled name scored against ``embedding``, best first.
+
+        Thresholds are not applied here -- :mod:`..identity` needs the runner-up too so it
+        can require a margin before naming anyone.
+        """
+        return self._gallery.rank(embedding)
+
     def embed(self, image: np.ndarray, box: Box) -> np.ndarray | None:
         """Face embedding only -- used for enrolling gallery photos."""
         observation = self.analyze(image, box)

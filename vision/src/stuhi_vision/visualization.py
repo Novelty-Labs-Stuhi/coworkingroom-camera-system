@@ -15,6 +15,19 @@ import cv2
 from .config import DoorwayConfig
 from .domain import Crossing, Frame, TrackedPerson
 
+
+def encode_jpeg(bgr, quality: int = 90) -> bytes | None:
+    """Encode an image as JPEG bytes, or ``None`` if it cannot be encoded.
+
+    Used to hand a face crop to a human (see :mod:`.notify.telegram`); kept here with the
+    rest of the "images for people to look at" code.
+    """
+    if bgr is None or getattr(bgr, "size", 0) == 0:
+        return None
+    ok, buffer = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    return bytes(buffer) if ok else None
+
+
 _GREEN = (0, 255, 0)
 _RED = (0, 0, 255)
 _BLUE = (255, 0, 0)
