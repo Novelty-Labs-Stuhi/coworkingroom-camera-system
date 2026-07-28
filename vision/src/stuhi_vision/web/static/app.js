@@ -45,23 +45,71 @@ function renderNames(names) {
   );
 }
 
+// Refresh without rebuilding. Replacing the whole list destroyed and recreated every
+// <video>, which blanked each clip, restarted it, and shifted the layout every poll. So
+// existing cards are updated in place and only genuinely new sightings are inserted --
+// a card's video element is never touched once it exists.
 function renderCards(section, records) {
   const host = document.getElementById(section);
-  host.replaceChildren(...records.map(buildCard));
+  const byId = new Map([...host.children].map((element) => [element.dataset.id, element]));
+  const order = records.map((record) => record.id);
+
+  for (const [id, element] of byId) {
+    if (!order.includes(id)) {
+      element.remove();
+      byId.delete(id);
+    }
+  }
+
+  records.forEach((record, index) => {
+    const existing = byId.get(record.id);
+    if (existing) {
+      updateCard(existing, record);
+      return;
+    }
+    const card = buildCard(record);
+    // Insert ahead of the first card that should follow it, so new arrivals land in the
+    // right place without moving anything that is already playing.
+    const nextId = order.slice(index + 1).find((id) => byId.has(id));
+    host.insertBefore(card, nextId ? byId.get(nextId) : null);
+    byId.set(record.id, card);
+    // play() only after the element is in the document; a detached one just rejects.
+    card.querySelector('video')?.play().catch(() => {});
+  });
+
   document.getElementById(`${section}-empty`).hidden = records.length > 0;
 }
 
+function updateCard(article, record) {
+  article.querySelector('.direction').textContent = record.direction;
+  article.querySelector('.score').textContent =
+    record.outcome === 'unidentified' ? 'no face seen' : `score ${record.score}`;
+  setCurrent(article.querySelector('.current'), record);
+
+  const input = article.querySelector('.name');
+  // Never overwrite what someone is in the middle of typing.
+  if (record.labelled_as && document.activeElement !== input) input.value = record.labelled_as;
+}
+
+function setCurrent(current, record) {
+  if (record.labelled_as) {
+    current.textContent = 'labelled ';
+    const name = document.createElement('b');
+    name.textContent = record.labelled_as;
+    current.append(name);
+  } else {
+    current.textContent = record.id;
+  }
+}
+
 function buildCard(record) {
-  const card = document.getElementById('card-template').content.cloneNode(true);
-  const article = card.querySelector('.card');
+  const fragment = document.getElementById('card-template').content.cloneNode(true);
+  const article = fragment.querySelector('.card');
   article.dataset.id = record.id;
 
-  const video = card.querySelector('video');
+  const video = fragment.querySelector('video');
   video.poster = `/media/${record.id}.jpg`;
   video.src = `/media/${record.id}.mp4`;
-  // Autoplay can still be refused (data saver, reduced motion); play() keeps it trying and
-  // a refusal is harmless, since the poster and controls are already there.
-  video.play().catch(() => {});
   // Fall back to the saved face crop when a clip could not be encoded.
   video.addEventListener('error', () => {
     const image = document.createElement('img');
@@ -71,27 +119,16 @@ function buildCard(record) {
     video.replaceWith(image);
   });
 
-  card.querySelector('.direction').textContent = record.direction;
-  card.querySelector('.score').textContent =
-    record.outcome === 'unidentified' ? 'no face seen' : `score ${record.score}`;
+  updateCard(article, record);
 
-  const current = card.querySelector('.current');
-  if (record.labelled_as) {
-    current.innerHTML = 'labelled <b></b>';
-    current.querySelector('b').textContent = record.labelled_as;
-  } else {
-    current.textContent = record.id;
-  }
-
-  const form = card.querySelector('.label-form');
-  const input = card.querySelector('.name');
-  if (record.labelled_as) input.value = record.labelled_as;
+  const form = fragment.querySelector('.label-form');
+  const input = fragment.querySelector('.name');
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     submitLabel(article, input.value);
   });
 
-  return card;
+  return article;
 }
 
 async function submitLabel(article, name) {
