@@ -59,7 +59,9 @@ class TelegramNotifier:
         return self._http
 
     # --- outbound -----------------------------------------------------------
-    def announce(self, sighting: Sighting, sighting_id: str) -> None:
+    def announce(
+        self, sighting: Sighting, sighting_id: str, position: int = 1, total: int = 1
+    ) -> None:
         """Post one crossing as a clip. Never raises -- a chat outage must not stop work.
 
         One message per crossing: the clip shows which way the person went and whether
@@ -67,7 +69,7 @@ class TelegramNotifier:
         still saved to disk for inspection, but sending it too doubled the traffic in the
         chat for little gain. The still is only used when no clip could be made.
         """
-        caption = _caption(sighting, sighting_id)
+        caption = _caption(sighting, sighting_id, position, total)
         clip = self._review.clip_path(sighting_id)
         crop = self._review.crop_path(sighting_id)
         try:
@@ -208,8 +210,13 @@ class TelegramNotifier:
         self._send_message("\n".join(f"{name}: {count}" for name, count in counts.items()))
 
 
-def _caption(sighting: Sighting, sighting_id: str) -> str:
-    """The message body: who, which way, how sure, and the id to reply with."""
+def _caption(sighting: Sighting, sighting_id: str, position: int = 1, total: int = 1) -> str:
+    """The message body: who, which way, how sure, and the id to reply with.
+
+    When several people come through together their clips are cut from the same window and
+    look nearly identical, so the crossing order is the only thing distinguishing them --
+    it is stated first, because it is what you label by.
+    """
     if sighting.outcome is Outcome.NAMED:
         who = f"{sighting.name} ({sighting.score:.2f})"
     elif sighting.name is not None:
@@ -219,7 +226,11 @@ def _caption(sighting: Sighting, sighting_id: str) -> str:
         who = f"unknown (best {sighting.score:.2f})"
     else:
         who = "no face seen"
-    lines = [f"{sighting.direction.value}: {who}", f"{_ID_PREFIX}{sighting_id}"]
+    lines = []
+    if total > 1:
+        lines.append(f"person {position} of {total} to cross")
+    lines.append(f"{sighting.direction.value}: {who}")
+    lines.append(f"{_ID_PREFIX}{sighting_id}")
     if sighting.outcome is Outcome.UNKNOWN:
         lines.append("reply: /label <name>")
     return "\n".join(lines)

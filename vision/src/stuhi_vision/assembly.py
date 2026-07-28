@@ -157,10 +157,10 @@ def _frame_hook(publisher: SightingPublisher, observer: FrameObserver | None):
 def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce):
     """File a completed sighting with its clip, notify the chat, then hand it on."""
 
-    def publish(sighting: Sighting, clip: bytes | None) -> None:
+    def publish(sighting: Sighting, clip: bytes | None, position: int, total: int) -> None:
         sighting_id = review.record(sighting, encode_jpeg=encode_jpeg, clip=clip)
         if notifier is not None:
-            notifier.announce(sighting, sighting_id)
+            notifier.announce(sighting, sighting_id, position, total)
         announce(sighting)
 
     return publish

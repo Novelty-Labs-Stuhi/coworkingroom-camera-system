@@ -25,6 +25,7 @@ from .domain import Sighting
 class _Held:
     sighting: Sighting
     clip: PendingClip
+    position: int  # 1-based order of crossing within this burst
     clear_frames: int = 0
 
 
@@ -41,14 +42,24 @@ class SightingPublisher:
         self._publish = publish
         self._clear_frames = max(1, clear_frames)
         self._held: list[_Held] = []
+        self._burst_count = 0
 
     @property
     def pending_count(self) -> int:
         return len(self._held)
 
     def hold(self, sighting: Sighting) -> None:
-        """Take a committed sighting and start collecting the rest of its clip."""
-        self._held.append(_Held(sighting=sighting, clip=self._recorder.begin()))
+        """Take a committed sighting and start collecting the rest of its clip.
+
+        Crossings are numbered within a *burst* -- consecutive crossings with no clear gap
+        between them, i.e. a group of people coming through together. When several people
+        cross at once their clips look almost identical, so the position is the only thing
+        that says which person a given clip is about.
+        """
+        self._burst_count += 1
+        self._held.append(
+            _Held(sighting=sighting, clip=self._recorder.begin(), position=self._burst_count)
+        )
 
     def advance(self, people_present: bool) -> None:
         """Call once per frame. Publishes any sighting whose clip is now complete."""
@@ -59,15 +70,19 @@ class SightingPublisher:
             held.clear_frames = 0 if people_present else held.clear_frames + 1
             if held.clear_frames >= self._clear_frames or held.clip.full:
                 ready.append(held)
-        for held in ready:
-            self._held.remove(held)
-            self._emit(held)
+        self._emit_all(ready)
 
     def flush(self) -> None:
         """Publish everything still waiting -- used on shutdown so nothing is lost."""
-        for held in list(self._held):
-            self._held.remove(held)
-            self._emit(held)
+        self._emit_all(list(self._held))
 
-    def _emit(self, held: _Held) -> None:
-        self._publish(held.sighting, self._recorder.finish(held.clip))
+    def _emit_all(self, ready: list[_Held]) -> None:
+        """Publish in crossing order, so the numbering the captions show is meaningful."""
+        if not ready:
+            return
+        total = self._burst_count
+        for held in sorted(ready, key=lambda h: h.position):
+            self._held.remove(held)
+            self._publish(held.sighting, self._recorder.finish(held.clip), held.position, total)
+        if not self._held:
+            self._burst_count = 0  # burst over; the next person starts a new group

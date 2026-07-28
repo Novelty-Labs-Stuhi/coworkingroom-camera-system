@@ -19,9 +19,11 @@ def _sighting() -> Sighting:
 
 def _setup(clear_frames: int = 3, max_clip_frames: int = 50):
     recorder = ClipRecorder(encode_jpeg=bytes, capacity=4, max_clip_frames=max_clip_frames)
-    published: list[tuple[Sighting, bytes | None]] = []
+    published: list[tuple[Sighting, bytes | None, int, int]] = []
     publisher = SightingPublisher(
-        recorder, lambda s, clip: published.append((s, clip)), clear_frames=clear_frames
+        recorder,
+        lambda s, clip, position, total: published.append((s, clip, position, total)),
+        clear_frames=clear_frames,
     )
     return recorder, publisher, published
 
@@ -98,3 +100,36 @@ def test_flush_publishes_everything_still_waiting() -> None:
 
     assert len(published) == 2
     assert publisher.pending_count == 0
+
+
+def test_several_people_are_numbered_in_crossing_order() -> None:
+    # Their clips are cut from the same window and look alike, so the position is the only
+    # thing that says which person a clip is about.
+    _, publisher, published = _setup(clear_frames=1)
+    first, second, third = _sighting(), _sighting(), _sighting()
+    publisher.hold(first)
+    publisher.hold(second)
+    publisher.hold(third)
+
+    publisher.advance(people_present=False)
+
+    assert [(p, total) for _s, _c, p, total in published] == [(1, 3), (2, 3), (3, 3)]
+    assert [s for s, _c, _p, _t in published] == [first, second, third]
+
+
+def test_a_lone_crossing_is_not_numbered() -> None:
+    _, publisher, published = _setup(clear_frames=1)
+    publisher.hold(_sighting())
+    publisher.advance(people_present=False)
+
+    assert published[0][2:] == (1, 1)  # position 1 of 1 -- caption omits it
+
+
+def test_numbering_restarts_for_the_next_burst() -> None:
+    _, publisher, published = _setup(clear_frames=1)
+    publisher.hold(_sighting())
+    publisher.advance(people_present=False)
+    publisher.hold(_sighting())
+    publisher.advance(people_present=False)
+
+    assert [p for _s, _c, p, _t in published] == [1, 1]
