@@ -24,10 +24,40 @@ def _announce(sighting: Sighting) -> None:
     typer.echo(f"[{sighting.direction.value:<3}]  {who} {verb}  score={sighting.score:.2f}")
 
 
+def _tracing_observer(cfg) -> object:
+    """Print each tracked person's position relative to the doorway line.
+
+    Without this, a doorway that never fires is indistinguishable from a camera that sees
+    nobody, and the only way to tell them apart is to guess. The sign of ``side`` is what
+    the crossing test keys on: a crossing is exactly a change of that sign.
+    """
+    from .doorway import _side
+
+    def observe(frame, people, crossings) -> None:
+        for person in people:
+            foot = person.box.foot
+            side = _side(cfg.doorway.line_a, cfg.doorway.line_b, foot)
+            typer.echo(
+                f"  track {person.track_id:<3} foot=({foot[0]:.0f},{foot[1]:.0f}) "
+                f"side={'+' if side > 0 else '-'}{abs(side):.0f}"
+            )
+        for crossing in crossings:
+            typer.echo(f"  >>> CROSSING {crossing.direction.value} track {crossing.track_id}")
+
+    return observe
+
+
 @app.command()
-def run(config_path: ConfigOption = Path("config.toml")) -> None:
+def run(
+    config_path: ConfigOption = Path("config.toml"),
+    trace: Annotated[
+        bool, typer.Option("--trace", help="Log every tracked position and side sign.")
+    ] = False,
+) -> None:
     """Process the configured camera/video and track occupancy live."""
-    application = assembly.build(config.load(config_path), announce=_announce)
+    cfg = config.load(config_path)
+    observer = _tracing_observer(cfg) if trace else None
+    application = assembly.build(cfg, announce=_announce, observer=observer)
     try:
         application.pipeline.run()
     except KeyboardInterrupt:
