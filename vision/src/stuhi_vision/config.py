@@ -43,6 +43,23 @@ class DoorwayConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CameraConfig:
+    """One camera: where its frames come from and which doorway line it watches.
+
+    Each camera at a doorway sees faces in one direction only -- in the other it films the
+    back of someone's head. With one camera per direction, both cameras see *every*
+    passage, so each is given the direction it can actually judge (``doorway.announce``)
+    and ignores the other. That is what stops one person being counted twice, and it is why
+    the doorway line belongs to the camera rather than to the room: each camera has its own
+    view, so its own pixel coordinates and its own idea of which side is inside.
+    """
+
+    name: str
+    source: SourceConfig
+    doorway: DoorwayConfig
+
+
+@dataclass(frozen=True, slots=True)
 class Thresholds:
     detection_conf: float = 0.4  # min YOLO confidence for a person
     face_match: float = 0.35  # min cosine to accept a face as a known person
@@ -126,13 +143,17 @@ class Telegram:
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    source: SourceConfig
-    doorway: DoorwayConfig
+    cameras: list[CameraConfig]
     thresholds: Thresholds = field(default_factory=Thresholds)
     performance: Performance = field(default_factory=Performance)
     paths: Paths = field(default_factory=Paths)
     web: Web = field(default_factory=Web)
     telegram: Telegram = field(default_factory=Telegram.from_env)
+
+    @property
+    def camera(self) -> CameraConfig:
+        """The first camera, for tools that inherently work on one view at a time."""
+        return self.cameras[0]
 
 
 def _point(raw: list[float]) -> Point:
@@ -140,18 +161,59 @@ def _point(raw: list[float]) -> Point:
     return float(x), float(y)
 
 
+def _doorway(raw: dict) -> DoorwayConfig:
+    return DoorwayConfig(
+        line_a=_point(raw["line_a"]),
+        line_b=_point(raw["line_b"]),
+        inside_side=raw["inside_side"],
+        announce=raw.get("announce", "both"),
+    )
+
+
+def _cameras(data: dict) -> list[CameraConfig]:
+    """Read either a list of ``[[camera]]`` tables or the single-camera form.
+
+    The single-camera form -- a ``[source]`` and a ``[doorway]`` table -- is still accepted
+    so an existing deployment keeps working unchanged. It is exactly one camera called
+    "camera", which is what it always was.
+    """
+    entries = data.get("camera")
+    if not entries:
+        if "source" not in data:
+            raise ValueError("config needs either [[camera]] entries or a [source] table")
+        return [
+            CameraConfig(
+                name=data["source"].get("name", "camera"),
+                source=SourceConfig(**{k: v for k, v in data["source"].items() if k != "name"}),
+                doorway=_doorway(data["doorway"]),
+            )
+        ]
+
+    cameras = [
+        CameraConfig(
+            name=entry.get("name", f"camera-{index + 1}"),
+            source=SourceConfig(
+                kind=entry.get("kind", "stream"),
+                target=entry["target"],
+                rotate=entry.get("rotate", 0),
+            ),
+            doorway=_doorway(entry),
+        )
+        for index, entry in enumerate(entries)
+    ]
+    names = [camera.name for camera in cameras]
+    if len(set(names)) != len(names):
+        # Names identify a camera in events and in the UI, so duplicates would make the
+        # record of which camera saw what meaningless.
+        raise ValueError(f"camera names must be unique, got {names}")
+    return cameras
+
+
 def load(path: str | Path) -> Config:
     """Parse a TOML config file into a typed :class:`Config`."""
     data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
 
-    source = SourceConfig(**data["source"])
-    door = data["doorway"]
-    doorway = DoorwayConfig(
-        line_a=_point(door["line_a"]),
-        line_b=_point(door["line_b"]),
-        inside_side=door["inside_side"],
-        announce=door.get("announce", "both"),
-    )
+    cameras = _cameras(data)
     thresholds = Thresholds(**data.get("thresholds", {}))
     performance = Performance(**data.get("performance", {}))
     paths_raw = data.get("paths", {})
@@ -161,8 +223,7 @@ def load(path: str | Path) -> Config:
         review_dir=Path(paths_raw.get("review_dir", "data/review")),
     )
     return Config(
-        source=source,
-        doorway=doorway,
+        cameras=cameras,
         thresholds=thresholds,
         performance=performance,
         paths=paths,

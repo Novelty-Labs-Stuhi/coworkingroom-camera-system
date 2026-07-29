@@ -33,16 +33,22 @@ def _tracing_observer(cfg) -> object:
     """
     from .doorway import _side
 
+    doorway = cfg.camera.doorway
+    label = cfg.camera.name
+
     def observe(frame, people, crossings) -> None:
         for person in people:
             foot = person.box.foot
-            side = _side(cfg.doorway.line_a, cfg.doorway.line_b, foot)
+            side = _side(doorway.line_a, doorway.line_b, foot)
             typer.echo(
-                f"  track {person.track_id:<3} foot=({foot[0]:.0f},{foot[1]:.0f}) "
+                f"  [{label}] track {person.track_id:<3} "
+                f"foot=({foot[0]:.0f},{foot[1]:.0f}) "
                 f"side={'+' if side > 0 else '-'}{abs(side):.0f}"
             )
         for crossing in crossings:
-            typer.echo(f"  >>> CROSSING {crossing.direction.value} track {crossing.track_id}")
+            typer.echo(
+                f"  >>> [{label}] CROSSING {crossing.direction.value} track {crossing.track_id}"
+            )
 
     return observe
 
@@ -59,7 +65,7 @@ def run(
     observer = _tracing_observer(cfg) if trace else None
     application = assembly.build(cfg, announce=_announce, observer=observer)
     try:
-        application.pipeline.run()
+        application.run()
     except KeyboardInterrupt:
         typer.echo("stopped")
     finally:
@@ -85,15 +91,16 @@ def review(
 
     cfg = config.load(config_path)
     if source is not None:
-        cfg = replace(cfg, source=SourceConfig(kind="file", target=source))
+        first = replace(cfg.camera, source=SourceConfig(kind="file", target=source))
+        cfg = replace(cfg, cameras=[first])
     # A review run must not touch the real occupancy database.
     review_db = Path(tempfile.gettempdir()) / "stuhi_review.db"
     cfg = replace(cfg, paths=replace(cfg.paths, database=review_db))
 
-    annotator = Annotator(cfg.doorway, output)
+    annotator = Annotator(cfg.camera.doorway, output)
     application = assembly.build(cfg, announce=_announce, observer=annotator)
     try:
-        application.pipeline.run()
+        application.run()
     finally:
         annotator.close()
         application.close()
@@ -114,16 +121,17 @@ def calibrate(
     from .visualization import draw_doorway
 
     cfg = config.load(config_path)
-    src = SourceConfig(kind="file", target=source) if source else cfg.source
+    src = SourceConfig(kind="file", target=source) if source else cfg.camera.source
     frame = next(iter(open_source(src)), None)
     if frame is None:
         typer.echo("no frames from source")
         raise typer.Exit(1)
     image = frame.image.copy()
-    draw_doorway(image, cfg.doorway)
+    draw_doorway(image, cfg.camera.doorway)
     output.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output), image)
-    typer.echo(f"wrote {output}  (line {cfg.doorway.line_a} -> {cfg.doorway.line_b})")
+    door = cfg.camera.doorway
+    typer.echo(f"wrote {output}  (line {door.line_a} -> {door.line_b})")
 
 
 @app.command()

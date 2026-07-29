@@ -1,1 +1,1 @@
-INSERT INTO events (timestamp, name, direction) VALUES (?, ?, ?);
+INSERT INTO events (timestamp, name, direction, camera) VALUES (?, ?, ?, ?);

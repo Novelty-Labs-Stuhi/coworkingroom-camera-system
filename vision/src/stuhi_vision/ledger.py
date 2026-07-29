@@ -12,12 +12,17 @@ inside by comparing its body embedding to each occupant's:
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 import numpy as np
 
 from .domain import Direction, Event, EventSink
 from .recognition.embeddings import cosine
+
+# An exit nobody could be matched to. Recorded rather than dropped, so the ledger's own
+# history shows the gap instead of the occupancy count quietly climbing forever.
+UNATTRIBUTED = "unknown"
 
 
 @dataclass(slots=True)
@@ -35,23 +40,50 @@ class Ledger:
         self._similarity = exit_similarity
         self._margin = exit_margin
         self._inside: dict[str, Occupant] = {}
+        # Occupancy is one fact about one room, but with a camera per direction two
+        # pipelines commit into it from their own threads. Without this, an entry and an
+        # exit landing together could read a half-updated set of occupants.
+        self._lock = threading.RLock()
 
     @property
     def occupancy(self) -> list[str]:
-        return sorted(self._inside)
+        with self._lock:
+            return sorted(self._inside)
 
-    def enter(self, name: str, body_embedding: np.ndarray | None, timestamp: float) -> None:
-        self._inside[name] = Occupant(name, timestamp, body_embedding)
-        self._sink.record(Event(timestamp, name, Direction.IN))
+    def enter(
+        self,
+        name: str,
+        body_embedding: np.ndarray | None,
+        timestamp: float,
+        camera: str = "",
+    ) -> None:
+        with self._lock:
+            self._inside[name] = Occupant(name, timestamp, body_embedding)
+            self._sink.record(Event(timestamp, name, Direction.IN, camera))
 
-    def exit(self, body_embedding: np.ndarray | None, timestamp: float) -> str | None:
-        """Attribute an exit to an occupant and remove them. ``None`` if unresolved."""
-        name = self._attribute(body_embedding)
-        if name is None:
-            return None
-        del self._inside[name]
-        self._sink.record(Event(timestamp, name, Direction.OUT))
-        return name
+    def exit(
+        self,
+        body_embedding: np.ndarray | None,
+        timestamp: float,
+        camera: str = "",
+        name: str | None = None,
+    ) -> str | None:
+        """Remove an occupant and journal the exit. Returns who left, if it can be told.
+
+        ``name`` is the identity the *face* gave, when this camera could see one -- which is
+        the case a camera facing outward is there for. It is trusted over the body-embedding
+        match, which exists only for cameras that see people leaving from behind.
+
+        An exit that cannot be attributed is still recorded, under ``unknown``: silently
+        writing nothing meant occupancy only ever grew, so the count drifted upward
+        permanently and no amount of walking out could correct it.
+        """
+        with self._lock:
+            resolved = name if name in self._inside else self._attribute(body_embedding)
+            if resolved is not None:
+                del self._inside[resolved]
+            self._sink.record(Event(timestamp, resolved or UNATTRIBUTED, Direction.OUT, camera))
+            return resolved
 
     def _attribute(self, query: np.ndarray | None) -> str | None:
         if not self._inside:

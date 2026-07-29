@@ -34,19 +34,32 @@ class EventStore:
         self._conn = _connect(database)
         self._lock = threading.Lock()
         self._conn.executescript(_sql("schema.sql"))
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Bring an older database up to the current schema, in place.
+
+        ``CREATE TABLE IF NOT EXISTS`` does nothing to a table that already exists, so a
+        database written before cameras were named would silently lack the column and every
+        insert would fail. Migrating beats recreating: the history is the point.
+        """
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}
+        if "camera" not in columns:
+            self._conn.executescript(_sql("add_event_camera.sql"))
+            self._conn.commit()
 
     def record(self, event: Event) -> None:
         with self._lock:
             self._conn.execute(
                 _sql("insert_event.sql"),
-                (event.timestamp, event.name, event.direction.value),
+                (event.timestamp, event.name, event.direction.value, event.camera),
             )
             self._conn.commit()
 
-    def recent(self, limit: int = 50) -> list[tuple[float, str, str]]:
+    def recent(self, limit: int = 50) -> list[tuple[float, str, str, str]]:
         with self._lock:
             rows = self._conn.execute(_sql("recent_events.sql"), (limit,)).fetchall()
-        return [(float(ts), name, direction) for ts, name, direction in rows]
+        return [(float(ts), name, direction, camera or "") for ts, name, direction, camera in rows]
 
     def close(self) -> None:
         self._conn.close()

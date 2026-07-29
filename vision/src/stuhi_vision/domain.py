@@ -107,6 +107,9 @@ class Event:
     timestamp: float
     name: str
     direction: Direction
+    # Which camera saw it. With one camera per direction, this is how a drifting count can
+    # be traced to the camera responsible rather than guessed at.
+    camera: str = ""
 
 
 class EventSink(Protocol):

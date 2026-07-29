@@ -104,6 +104,43 @@ frame with a face in it has reached the server yet. Per-person cost will be high
 219 ms detection figure. Also unverified: the `det_size` reduction to 480, which landed at
 the same time as the module restriction, so their contributions are not separable.
 
+## One camera per direction
+
+A camera at a doorway sees faces going one way and the backs of heads going the other. With
+a camera on each side, **both cameras see every passage** — so each is given the one
+direction it can actually judge (`announce = "in" | "out"`) and ignores the other. Two
+consequences follow, and they are the whole reason for the arrangement:
+
+* **No passage is counted twice**, without any cross-camera matching. Comparing tracks
+  between two views is the hard problem in multi-camera vision; assigning directions avoids
+  it completely. Track ids stay meaningless across cameras and nothing tries to reconcile
+  them.
+* **Exits get named by a face**, exactly as entries do. The body-embedding exit match still
+  exists for a single-camera deployment, but with two cameras it is no longer load-bearing —
+  which removes the clothing-dependence that broke the first system.
+
+The filter is applied *before* the clip is opened. Filtering after publication would still
+cut, encode and send a second video showing the back of someone's head.
+
+**The doorway line belongs to the camera, not the room.** Each has its own view, so its own
+pixel coordinates and its own idea of which side is inside — `inside_side` **flips** between
+opposed cameras. Copying one camera's block to the other and forgetting that makes it label
+entries as exits, and the symptom (occupancy running backwards) looks like a logic bug
+rather than a config error.
+
+**Shared exactly once, each internally locked:** the face gallery (a face enrolled from one
+camera must be recognised by the other), the occupancy ledger (one room, one truth), the
+event store, and the review queue. Everything else — tracker, sessions, motion gate, clip
+recorder, publisher — is per camera. Each camera runs its own pipeline in its own thread.
+
+**Every event records which camera saw it**, so a drifting count can be traced to the
+camera responsible instead of guessed at. Databases written before this migrate in place;
+recreating them would throw away the history that is the point of keeping them.
+
+**An exit that cannot be attributed is now recorded as `unknown`** rather than dropped.
+Silently writing nothing meant occupancy only ever grew — the count drifted upward
+permanently and no amount of walking out could correct it.
+
 ## The labelling loop
 
 An unrecognised face is not a dead end — it is how the gallery grows. Every crossing is

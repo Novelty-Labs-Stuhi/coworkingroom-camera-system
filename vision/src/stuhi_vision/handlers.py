@@ -24,10 +24,17 @@ from .sessions import SessionManager, TrackSession
 class Doorkeeper:
     """Turns crossings into ledger entries/exits, gated by track persistence."""
 
-    def __init__(self, sessions: SessionManager, ledger: Ledger, min_track_age: int) -> None:
+    def __init__(
+        self,
+        sessions: SessionManager,
+        ledger: Ledger,
+        min_track_age: int,
+        camera: str = "",
+    ) -> None:
         self._sessions = sessions
         self._ledger = ledger
         self._min_track_age = min_track_age
+        self._camera = camera
         self._guests = 0
 
     def commit(self, crossing: Crossing) -> Sighting | None:
@@ -40,7 +47,7 @@ class Doorkeeper:
         if crossing.direction is Direction.IN:
             name = self._enter(session, decision, crossing.timestamp)
         else:
-            name = self._exit(session, crossing.timestamp)
+            name = self._exit(session, decision, crossing.timestamp)
 
         return Sighting(
             timestamp=crossing.timestamp,
@@ -57,11 +64,19 @@ class Doorkeeper:
         embedding = session.entry_embedding
         if embedding is None:
             embedding = session.body_embedding  # no face frame; use the sharpest body
-        self._ledger.enter(name, embedding, timestamp)
+        self._ledger.enter(name, embedding, timestamp, self._camera)
         return name
 
-    def _exit(self, session: TrackSession, timestamp: float) -> str | None:
-        return self._ledger.exit(session.body_embedding, timestamp)
+    def _exit(self, session: TrackSession, decision: Decision, timestamp: float) -> str | None:
+        """Leave, named by the face when this camera could see one.
+
+        A camera facing people as they leave recognises them exactly as one facing people
+        arriving does. Passing that name to the ledger is the point of having a camera per
+        direction; previously it was computed and then thrown away, and the exit fell back
+        to a body-embedding match that usually resolved to nothing.
+        """
+        named = decision.name if decision.outcome is Outcome.NAMED else None
+        return self._ledger.exit(session.body_embedding, timestamp, self._camera, named)
 
     def _new_guest(self) -> str:
         self._guests += 1

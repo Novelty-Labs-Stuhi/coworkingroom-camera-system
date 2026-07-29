@@ -1,20 +1,30 @@
-# Copy to config.toml and adjust for your camera. All coordinates are in pixels of
-# the camera image, with (0, 0) at the top-left.
+# Copy to config.toml and adjust for your cameras. All coordinates are in pixels of that
+# camera's image, with (0, 0) at the top-left.
 
-[source]
-# kind = "file"   -> target is a path to a recorded video (best for first tests)
-# kind = "webcam" -> target is a camera index, e.g. "0"
-# kind = "stream" -> target is an ESP32-CAM / RTSP URL, e.g. "http://192.168.1.50:81/stream"
-kind = "file"
-target = "data/door.mp4"
+# One [[camera]] block per camera. With a camera on each side of a doorway, both see every
+# passage -- so give each the direction it can actually see faces for, and it ignores the
+# other. That is what stops one person being counted twice, and it means both entries and
+# exits are named by a face rather than guessed from a body.
+[[camera]]
+name = "door-in"                              # identifies it in events and in the UI
+kind = "stream"                               # file | webcam | stream
+target = "http://192.168.8.229:81/stream"
+rotate = 180                                  # 0/90/180/270: detection fails on an inverted frame
+line_a = [300, 0]                             # the threshold line, two endpoints
+line_b = [300, 480]
+inside_side = "left"                          # which side of a -> b is inside the office
+announce = "in"                               # in | out | both -- what this camera films
 
-[doorway]
-# The threshold line drawn across the doorway, as two endpoints [x, y].
-# A person's foot point crossing this line counts as entering or leaving.
-line_a = [100, 360]
-line_b = [540, 360]
-# Which side of the line is inside the office: "left" or "right" of the a -> b direction.
-inside_side = "left"
+# The opposite camera sees the same doorway mirrored, so inside_side flips. Draw its line
+# from its own footage: `stuhi-vision calibrate` writes a frame with the line on it.
+# [[camera]]
+# name = "door-out"
+# target = "http://192.168.8.230:81/stream"
+# rotate = 0
+# line_a = [160, 0]
+# line_b = [160, 240]
+# inside_side = "right"
+# announce = "out"
 
 [thresholds]
 detection_conf = 0.4    # minimum YOLO confidence to treat a detection as a person

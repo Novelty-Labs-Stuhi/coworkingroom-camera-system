@@ -6,10 +6,11 @@ modules themselves stay free of construction logic and the CLI stays thin.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from .clips import ClipRecorder
-from .config import Config
+from .config import CameraConfig, Config, DoorwayConfig
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
@@ -32,25 +33,73 @@ from .visualization import encode_jpeg
 from .web import WebUI
 
 
-@dataclass(slots=True)
-class Application:
-    pipeline: Pipeline
-    store: EventStore
+@dataclass(frozen=True, slots=True)
+class _Shared:
+    """The state every camera works through, rather than owning a copy of.
+
+    A face enrolled from one camera must be recognised by the other, and occupancy is one
+    fact about one room -- so these exist exactly once and each is internally locked.
+    """
+
+    gallery: FaceGallery
+    ledger: Ledger
     review: ReviewQueue
+    notifier: TelegramNotifier | None
+
+
+@dataclass(slots=True)
+class Camera:
+    """One camera's own machinery. Nothing here is shared with another camera.
+
+    Each camera tracks independently -- separate ByteTrack state, separate track ids,
+    separate sessions -- because a track id means nothing across two views and reconciling
+    them is the hard problem that giving each camera one direction avoids entirely.
+    """
+
+    name: str
+    pipeline: Pipeline
     sessions: SessionManager
     publisher: SightingPublisher
+
+    def close(self) -> None:
+        # Anything still waiting for its clip must go out, or a crossing just before
+        # shutdown would be dropped silently.
+        self.publisher.flush()
+        self.sessions.close()
+
+
+@dataclass(slots=True)
+class Application:
+    """Every camera, over the one gallery, ledger, review queue and store they share."""
+
+    cameras: list[Camera]
+    store: EventStore
+    review: ReviewQueue
+    ledger: Ledger
     notifier: TelegramNotifier | None = None
     web: WebUI | None = None
 
+    def run(self) -> None:
+        """Run every camera until they stop. One thread each; the last one blocks here."""
+        if len(self.cameras) == 1:
+            self.cameras[0].pipeline.run()
+            return
+        threads = [
+            threading.Thread(target=camera.pipeline.run, name=f"pipeline-{camera.name}")
+            for camera in self.cameras
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
     def close(self) -> None:
-        # Anything still waiting for its clip to finish must go out, or a crossing right
-        # before shutdown would be silently dropped.
-        self.publisher.flush()
+        for camera in self.cameras:
+            camera.close()
         if self.web is not None:
             self.web.stop()
         if self.notifier is not None:
             self.notifier.stop()
-        self.sessions.close()
         self.store.close()
 
 
@@ -60,20 +109,10 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     ``observer`` is an optional per-frame hook (e.g. an Annotator) for offline review.
     """
     thresholds = config.thresholds
-    performance = config.performance
+
     gallery = FaceGallery.load(config.paths.gallery_dir)
-    faces = FaceRecognizer(gallery, thresholds.face_match)
-    bodies = BodyEmbedder()
     store = EventStore(config.paths.database)
     ledger = Ledger(store, thresholds.exit_similarity, thresholds.exit_margin)
-    sessions = SessionManager(
-        faces,
-        bodies,
-        thresholds.face_match,
-        thresholds.face_margin,
-        face_workers=performance.face_workers,
-    )
-    doorkeeper = Doorkeeper(sessions, ledger, thresholds.min_track_age)
     review = ReviewQueue(config.paths.review_dir, gallery, config.paths.gallery_dir)
 
     notifier: TelegramNotifier | None = None
@@ -88,6 +127,38 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         web = WebUI(review, host=config.web.host, port=config.web.port)
         web.start()
 
+    shared = _Shared(gallery=gallery, ledger=ledger, review=review, notifier=notifier)
+    cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
+    return Application(
+        cameras=cameras,
+        store=store,
+        review=review,
+        ledger=ledger,
+        notifier=notifier,
+        web=web,
+    )
+
+
+def _build_camera(
+    entry: CameraConfig,
+    config: Config,
+    shared: _Shared,
+    announce,
+    observer: FrameObserver | None,
+) -> Camera:
+    """Everything one camera needs, wired to the shared gallery and ledger."""
+    thresholds = config.thresholds
+    performance = config.performance
+
+    sessions = SessionManager(
+        FaceRecognizer(shared.gallery, thresholds.face_match),
+        BodyEmbedder(),
+        thresholds.face_match,
+        thresholds.face_margin,
+        face_workers=performance.face_workers,
+    )
+    doorkeeper = Doorkeeper(sessions, shared.ledger, thresholds.min_track_age, camera=entry.name)
+
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
     # frames that happened to follow the commit.
     recorder = ClipRecorder(
@@ -96,11 +167,11 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         max_clip_frames=performance.clip_max_frames,
     )
     source = _recorded(
-        BufferedSource(open_source(config.source), performance.buffer_capacity), recorder
+        BufferedSource(open_source(entry.source), performance.buffer_capacity), recorder
     )
     publisher = SightingPublisher(
         recorder,
-        _publisher(review, notifier, announce),
+        _publisher(shared.review, shared.notifier, announce),
         clear_frames=performance.clip_clear_frames,
     )
 
@@ -113,33 +184,24 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
                 imgsz=performance.detect_imgsz,
             ),
             gate=MotionGate(min_fraction=performance.motion_min_fraction),
-            region_builder=_region_builder(config),
+            region_builder=_region_builder(entry.doorway, performance.crop_padding),
         ),
-        doorway=DoorwayMonitor(config.doorway),
+        doorway=DoorwayMonitor(entry.doorway),
         sessions=sessions,
         doorkeeper=doorkeeper,
-        announce=_directional(config.doorway.announce, publisher, announce),
+        announce=_directional(entry.doorway.announce, publisher, announce),
         on_frame=_frame_hook(publisher, observer),
     )
-    return Application(
-        pipeline=pipeline,
-        store=store,
-        review=review,
-        sessions=sessions,
-        publisher=publisher,
-        notifier=notifier,
-        web=web,
-    )
+    return Camera(name=entry.name, pipeline=pipeline, sessions=sessions, publisher=publisher)
 
 
-def _region_builder(config: Config):
+def _region_builder(doorway: DoorwayConfig, padding: float):
     """Crop detection to the doorway, unless padding is zero (whole frame)."""
-    padding = config.performance.crop_padding
     if padding <= 0:
         return None
 
     def build_region(width: int, height: int) -> Region:
-        return Region.around(config.doorway.line_a, config.doorway.line_b, width, height, padding)
+        return Region.around(doorway.line_a, doorway.line_b, width, height, padding)
 
     return build_region
 
