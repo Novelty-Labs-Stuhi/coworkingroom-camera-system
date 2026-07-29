@@ -90,9 +90,7 @@ def _replay(args: argparse.Namespace, monitor, model) -> tuple[list, dict, list]
     # Let every open track finish, so a person still in view at the end is judged too.
     for extra in range(args.lost_after + 5):
         if frame is not None:
-            crossings += [
-                (len(paths) + extra, crossing) for crossing in monitor.update([], frame)
-            ]
+            crossings += [(len(paths) + extra, crossing) for crossing in monitor.update([], frame)]
     return paths, seen, crossings
 
 
