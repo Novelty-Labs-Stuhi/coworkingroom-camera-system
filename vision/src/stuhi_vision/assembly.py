@@ -10,7 +10,7 @@ import threading
 from dataclasses import dataclass
 
 from .clips import ClipRecorder
-from .config import CameraConfig, Config, DoorwayConfig
+from .config import CameraConfig, Config
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
@@ -28,6 +28,7 @@ from .sessions import SessionManager
 from .sources import open_source
 from .sources.buffered import BufferedSource
 from .store import EventStore
+from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
 from .web import WebUI
@@ -184,20 +185,32 @@ def _build_camera(
                 imgsz=performance.detect_imgsz,
             ),
             gate=MotionGate(min_fraction=performance.motion_min_fraction),
-            region_builder=_region_builder(entry.doorway, performance.crop_padding),
+            region_builder=_region_builder(entry, performance.crop_padding),
         ),
-        doorway=DoorwayMonitor(entry.doorway),
+        doorway=_monitor(entry),
         sessions=sessions,
         doorkeeper=doorkeeper,
-        announce=_directional(entry.doorway.announce, publisher, announce),
+        announce=_directional(entry.announce, publisher, announce),
         on_frame=_frame_hook(publisher, observer),
     )
     return Camera(name=entry.name, pipeline=pipeline, sessions=sessions, publisher=publisher)
 
 
-def _region_builder(doorway: DoorwayConfig, padding: float):
-    """Crop detection to the doorway, unless padding is zero (whole frame)."""
-    if padding <= 0:
+def _monitor(entry: CameraConfig):
+    """The passage detector this camera configured. Both share one update() signature."""
+    if isinstance(entry.detector, ThresholdConfig):
+        return ThresholdMonitor(entry.detector)
+    return DoorwayMonitor(entry.detector)
+
+
+def _region_builder(entry: CameraConfig, padding: float):
+    """Crop detection to the doorway line, unless cropping is off or there is no line.
+
+    The doorframe rule needs the whole frame -- it is about a person leaving the edge of it,
+    so cropping would remove exactly the evidence it depends on.
+    """
+    doorway = entry.doorway
+    if padding <= 0 or doorway is None:
         return None
 
     def build_region(width: int, height: int) -> Region:

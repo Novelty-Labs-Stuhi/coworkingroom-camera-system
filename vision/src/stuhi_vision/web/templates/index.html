@@ -55,9 +55,14 @@
 
   <template id="card-template">
     <article class="card">
-      <!-- autoplay+muted+playsinline so a clip is visible without a click; the poster is
-           the saved face crop, so something recognisable shows before the video decodes. -->
-      <video controls muted loop autoplay playsinline preload="auto"></video>
+      <!-- A still is what you label from: one glance, nothing moving, no waiting. Several
+           autoplaying clips at once also made the page jump about. The clip stays one click
+           away for when the still is ambiguous. -->
+      <img class="face" alt="the face this sighting was recognised from">
+      <details class="clip">
+        <summary>watch the clip</summary>
+        <video controls muted loop playsinline preload="none"></video>
+      </details>
       <div class="meta">
         <span class="direction"></span>
         <span class="score"></span>

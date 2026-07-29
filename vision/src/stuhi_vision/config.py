@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from .domain import Direction
+from .threshold import ThresholdConfig
+
 Point = tuple[float, float]
 Side = Literal["left", "right"]
 Reported = Literal["in", "out", "both"]
@@ -33,30 +36,32 @@ class DoorwayConfig:
     line_a: Point  # one end of the threshold line, in pixels
     line_b: Point  # the other end
     inside_side: Side  # which side of the line is "inside the office"
-    # Which crossings this camera films and announces. A camera only sees faces in one
-    # direction; in the other it films the back of someone's head, which cannot be judged
-    # or labelled -- and with a camera on each side of the door, every passage is seen
-    # twice, so announcing both directions from both cameras means two messages per person.
-    # Crossings in the unreported direction are still counted and written to the ledger;
-    # only the clip and the chat message are suppressed.
-    announce: Reported = "both"
 
 
 @dataclass(frozen=True, slots=True)
 class CameraConfig:
-    """One camera: where its frames come from and which doorway line it watches.
+    """One camera: its frames, how it recognises a passage, and what it reports.
 
     Each camera at a doorway sees faces in one direction only -- in the other it films the
     back of someone's head. With one camera per direction, both cameras see *every*
-    passage, so each is given the direction it can actually judge (``doorway.announce``)
-    and ignores the other. That is what stops one person being counted twice, and it is why
-    the doorway line belongs to the camera rather than to the room: each camera has its own
-    view, so its own pixel coordinates and its own idea of which side is inside.
+    passage, so each is given the direction it can actually judge (``announce``) and ignores
+    the other. That is what stops one person being counted twice.
+
+    How a passage is recognised belongs to the camera too, because each has its own view:
+    its own pixel coordinates, its own idea of which side is inside, its own doorframe.
+    ``detector`` is either a :class:`DoorwayConfig` (a line the foot point crosses) or a
+    :class:`ThresholdConfig` (occluding the doorframe and leaving at an edge).
     """
 
     name: str
     source: SourceConfig
-    doorway: DoorwayConfig
+    detector: DoorwayConfig | ThresholdConfig
+    announce: Reported = "both"
+
+    @property
+    def doorway(self) -> DoorwayConfig | None:
+        """The line configuration, when this camera uses one -- for drawing overlays."""
+        return self.detector if isinstance(self.detector, DoorwayConfig) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,12 +166,27 @@ def _point(raw: list[float]) -> Point:
     return float(x), float(y)
 
 
-def _doorway(raw: dict) -> DoorwayConfig:
+def _detector(raw: dict) -> DoorwayConfig | ThresholdConfig:
+    """Build whichever passage detector the camera describes.
+
+    A ``zone`` means the doorframe rule: overlap the frame and leave at an edge. Otherwise
+    it is the older line-crossing form, kept because a camera that genuinely sees a
+    threshold from the side is still well served by it.
+    """
+    if "zone" in raw or raw.get("detector") == "threshold":
+        zone = raw.get("zone", [0.0, 0.0, 0.25, 1.0])
+        return ThresholdConfig(
+            zone=(float(zone[0]), float(zone[1]), float(zone[2]), float(zone[3])),
+            edge=raw.get("edge", "left"),
+            margin=float(raw.get("margin", 0.12)),
+            passing_means=Direction(raw.get("passing_means", "in")),
+            min_height=float(raw.get("min_height", 0.35)),
+            lost_after=int(raw.get("lost_after", 6)),
+        )
     return DoorwayConfig(
         line_a=_point(raw["line_a"]),
         line_b=_point(raw["line_b"]),
         inside_side=raw["inside_side"],
-        announce=raw.get("announce", "both"),
     )
 
 
@@ -185,7 +205,8 @@ def _cameras(data: dict) -> list[CameraConfig]:
             CameraConfig(
                 name=data["source"].get("name", "camera"),
                 source=SourceConfig(**{k: v for k, v in data["source"].items() if k != "name"}),
-                doorway=_doorway(data["doorway"]),
+                detector=_detector(data["doorway"]),
+                announce=data["doorway"].get("announce", "both"),
             )
         ]
 
@@ -197,7 +218,8 @@ def _cameras(data: dict) -> list[CameraConfig]:
                 target=entry["target"],
                 rotate=entry.get("rotate", 0),
             ),
-            doorway=_doorway(entry),
+            detector=_detector(entry),
+            announce=entry.get("announce", "both"),
         )
         for index, entry in enumerate(entries)
     ]

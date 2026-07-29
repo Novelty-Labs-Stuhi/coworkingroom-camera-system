@@ -37,14 +37,25 @@ def _tracing_observer(cfg) -> object:
     label = cfg.camera.name
 
     def observe(frame, people, crossings) -> None:
+        height, width = frame.image.shape[:2]
         for person in people:
-            foot = person.box.foot
-            side = _side(doorway.line_a, doorway.line_b, foot)
-            typer.echo(
-                f"  [{label}] track {person.track_id:<3} "
-                f"foot=({foot[0]:.0f},{foot[1]:.0f}) "
-                f"side={'+' if side > 0 else '-'}{abs(side):.0f}"
-            )
+            box = person.box
+            # With the doorframe rule there is no line to report a side of, so give the
+            # position and size that rule actually keys on: the box edges and its height.
+            if doorway is None:
+                typer.echo(
+                    f"  [{label}] track {person.track_id:<3} "
+                    f"x={box.x1 / width:.2f}..{box.x2 / width:.2f} "
+                    f"h={(box.y2 - box.y1) / height:.2f}"
+                )
+            else:
+                foot = box.foot
+                side = _side(doorway.line_a, doorway.line_b, foot)
+                typer.echo(
+                    f"  [{label}] track {person.track_id:<3} "
+                    f"foot=({foot[0]:.0f},{foot[1]:.0f}) "
+                    f"side={'+' if side > 0 else '-'}{abs(side):.0f}"
+                )
         for crossing in crossings:
             typer.echo(
                 f"  >>> [{label}] CROSSING {crossing.direction.value} track {crossing.track_id}"
@@ -97,7 +108,11 @@ def review(
     review_db = Path(tempfile.gettempdir()) / "stuhi_review.db"
     cfg = replace(cfg, paths=replace(cfg.paths, database=review_db))
 
-    annotator = Annotator(cfg.camera.doorway, output)
+    doorway = cfg.camera.doorway
+    if doorway is None:
+        typer.echo("this camera uses the doorframe rule, which has no line to draw")
+        raise typer.Exit(1)
+    annotator = Annotator(doorway, output)
     application = assembly.build(cfg, announce=_announce, observer=annotator)
     try:
         application.run()
@@ -127,11 +142,14 @@ def calibrate(
         typer.echo("no frames from source")
         raise typer.Exit(1)
     image = frame.image.copy()
-    draw_doorway(image, cfg.camera.doorway)
+    doorway = cfg.camera.doorway
+    if doorway is None:
+        typer.echo("this camera uses the doorframe rule; nothing to draw")
+        raise typer.Exit(1)
+    draw_doorway(image, doorway)
     output.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output), image)
-    door = cfg.camera.doorway
-    typer.echo(f"wrote {output}  (line {door.line_a} -> {door.line_b})")
+    typer.echo(f"wrote {output}  (line {doorway.line_a} -> {doorway.line_b})")
 
 
 @app.command()

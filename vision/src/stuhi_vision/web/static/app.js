@@ -105,8 +105,6 @@ function renderCards(section, records) {
     const nextId = order.slice(index + 1).find((id) => byId.has(id));
     host.insertBefore(card, nextId ? byId.get(nextId) : null);
     byId.set(record.id, card);
-    // play() only after the element is in the document; a detached one just rejects.
-    card.querySelector('video')?.play().catch(() => {});
   });
 
   document.getElementById(`${section}-empty`).hidden = records.length > 0;
@@ -152,16 +150,24 @@ function buildCard(record) {
   const article = fragment.querySelector('.card');
   article.dataset.id = record.id;
 
-  const video = fragment.querySelector('video');
-  video.poster = `/media/${record.id}.jpg`;
-  video.src = `/media/${record.id}.mp4`;
-  // Fall back to the saved face crop when a clip could not be encoded.
-  video.addEventListener('error', () => {
-    const image = document.createElement('img');
-    image.src = `/media/${record.id}.jpg`;
-    image.alt = 'face crop';
-    image.style.width = '100%';
-    video.replaceWith(image);
+  const face = fragment.querySelector('img.face');
+  face.src = `/media/${record.id}.jpg`;
+  // An UNIDENTIFIED sighting has no crop; say so rather than showing a broken image.
+  face.addEventListener('error', () => {
+    const note = document.createElement('p');
+    note.className = 'empty';
+    note.textContent = 'no face was captured for this crossing';
+    face.replaceWith(note);
+  });
+
+  // preload="none" until opened, so twenty cards do not fetch twenty videos.
+  const details = fragment.querySelector('details.clip');
+  const video = details.querySelector('video');
+  details.addEventListener('toggle', () => {
+    if (details.open && !video.src) {
+      video.src = `/media/${record.id}.mp4`;
+      video.play().catch(() => {});
+    }
   });
 
   updateCard(article, record);

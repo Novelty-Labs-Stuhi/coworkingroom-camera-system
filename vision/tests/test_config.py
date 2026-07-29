@@ -79,10 +79,10 @@ def test_two_cameras_each_keep_their_own_view(tmp_path: Path) -> None:
     first, second = cfg.cameras
     assert first.source.target == "http://in/stream"
     assert first.source.rotate == 180
-    assert first.doorway.announce == "in"
+    assert first.announce == "in"
     assert second.source.rotate == 0  # defaulted
-    assert second.doorway.inside_side == "right"
-    assert second.doorway.announce == "out"
+    assert second.detector.inside_side == "right"
+    assert second.announce == "out"
 
 
 def test_the_single_camera_form_still_loads(tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ def test_the_single_camera_form_still_loads(tmp_path: Path) -> None:
 
     assert len(cfg.cameras) == 1
     assert cfg.cameras[0].name == "camera"
-    assert cfg.camera.doorway.announce == "both"
+    assert cfg.camera.announce == "both"
 
 
 def test_duplicate_camera_names_are_refused(tmp_path: Path) -> None:
@@ -124,3 +124,33 @@ def test_a_config_with_no_camera_at_all_is_refused(tmp_path: Path) -> None:
         assert "camera" in str(error)
         return
     raise AssertionError("a config with no camera should be refused")
+
+
+_DOORFRAME_CAMERA = """
+[[camera]]
+name = "door-in"
+target = "http://in/stream"
+rotate = 180
+zone = [0.0, 0.0, 0.30, 1.0]
+edge = "left"
+passing_means = "in"
+min_height = 0.4
+announce = "in"
+"""
+
+
+def test_a_camera_can_use_the_doorframe_rule_instead_of_a_line(tmp_path: Path) -> None:
+    from stuhi_vision.threshold import ThresholdConfig
+
+    path = tmp_path / "doorframe.toml"
+    path.write_text(_DOORFRAME_CAMERA, encoding="utf-8")
+
+    cfg = config.load(path)
+    detector = cfg.camera.detector
+
+    assert isinstance(detector, ThresholdConfig)
+    assert detector.zone == (0.0, 0.0, 0.30, 1.0)
+    assert detector.edge == "left"
+    assert detector.min_height == 0.4
+    # No line exists for this camera, so anything that draws one must be able to tell.
+    assert cfg.camera.doorway is None
