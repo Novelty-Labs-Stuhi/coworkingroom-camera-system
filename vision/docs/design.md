@@ -104,6 +104,53 @@ frame with a face in it has reached the server yet. Per-person cost will be high
 219 ms detection figure. Also unverified: the `det_size` reduction to 480, which landed at
 the same time as the module restriction, so their contributions are not separable.
 
+## Recognising a passage: the doorframe, not a line
+
+The original rule drew a line across the doorway and watched a person's foot point cross it.
+It failed repeatedly against this doorway, and the reasons are worth keeping:
+
+* **The foot point sat pinned to the bottom edge of the frame.** People pass close to the
+  camera, so their feet leave the picture. A horizontal line was therefore never crossed —
+  measured foot y-values were 477–480 out of 480 for every frame of a passage.
+* **The line had to be redrawn from a still whenever a camera moved**, and it is drawn in
+  pixels, so it silently stops matching.
+* **`inside_side` reversed the count when set wrongly**, and the symptom — occupancy running
+  backwards — looks like a logic bug rather than a configuration one.
+
+The replacement uses a sturdier fact about the scene, and it came from watching the footage:
+**the doorframe is visible, and a person passing through occludes it.** Their pixels are in
+front of the frame; somebody merely moving in the corridor beyond is seen *through* the
+opening and never overlaps it. So a *finished* track is judged by where it began and ended:
+
+| Track | Verdict |
+|---|---|
+| touched the doorframe zone, **last** seen at the far edge | passed through, `passing_means` |
+| touched the zone, **first** seen at that edge | came from beyond the door, the opposite |
+| never touched the zone, or never tall enough | background traffic — ignored |
+| both or neither | stepped in and back out — not a passage |
+
+Three properties matter more than the specific thresholds:
+
+**The decision is deferred until the track ends.** Whether somebody passed *through* is only
+knowable once they stop being visible — and that disappearance is precisely the signal. This
+is why the detector owns track lifetimes and emits nothing while a person is still in view.
+
+**Nothing is a hairline.** The zone is a broad strip and the edge has a margin, so a knocked
+camera degrades gradually rather than silently counting nothing.
+
+**Track ids do the work of separating people.** No cross-camera identity matching is needed,
+because each camera judges only its own direction.
+
+The same shape of rule serves a room-facing camera with `edge = "bottom"`: it sits at the
+door looking inward, so somebody leaving walks toward the lens and out of the bottom of the
+frame. There is no doorframe in that view to occlude, so `min_height` does the work of
+separating a person at the door from people seated across the room — that view has a person
+in *every* frame, which is why plain presence is useless there.
+
+`tools/replay_threshold.py` replays recorded frames through the rule with the parameters on
+the command line. Tuning it against the live system is impractical: each attempt costs
+somebody a walk down the corridor, and a negative result says only "nothing happened".
+
 ## One camera per direction
 
 A camera at a doorway sees faces going one way and the backs of heads going the other. With
