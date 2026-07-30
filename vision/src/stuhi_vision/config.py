@@ -19,6 +19,10 @@ from .threshold import ThresholdConfig
 Point = tuple[float, float]
 Side = Literal["left", "right"]
 Reported = Literal["in", "out", "both"]
+# What a camera is for. "count" commits passages to the ledger; "identify" commits nothing and
+# only supplies the name of whoever it saw leaving, for the counting camera to attach to its
+# exit. Both cameras see every passage, so exactly one of them may count it.
+Role = Literal["count", "identify"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,10 +46,14 @@ class DoorwayConfig:
 class CameraConfig:
     """One camera: its frames, how it recognises a passage, and what it reports.
 
-    Each camera at a doorway sees faces in one direction only -- in the other it films the
-    back of someone's head. With one camera per direction, both cameras see *every*
-    passage, so each is given the direction it can actually judge (``announce``) and ignores
-    the other. That is what stops one person being counted twice.
+    Both cameras at a doorway see *every* passage, so exactly one of them may commit it: that
+    is what ``role`` settles. The camera that can see the doorframe counts, because occluding
+    the frame is what distinguishes a passage from someone crossing the room behind it. The
+    other identifies -- it watches leavers walk at the lens face-first, where the counting
+    camera only ever sees the back of their head -- and commits nothing.
+
+    ``announce`` is a narrower thing: which directions this camera films and sends to the
+    chat, whatever it does with them.
 
     How a passage is recognised belongs to the camera too, because each has its own view:
     its own pixel coordinates, its own idea of which side is inside, its own doorframe.
@@ -57,6 +65,7 @@ class CameraConfig:
     source: SourceConfig
     detector: DoorwayConfig | ThresholdConfig
     announce: Reported = "both"
+    role: Role = "count"
 
     @property
     def doorway(self) -> DoorwayConfig | None:
@@ -222,6 +231,7 @@ def _cameras(data: dict) -> list[CameraConfig]:
             ),
             detector=_detector(entry),
             announce=entry.get("announce", "both"),
+            role=entry.get("role", "count"),
         )
         for index, entry in enumerate(entries)
     ]

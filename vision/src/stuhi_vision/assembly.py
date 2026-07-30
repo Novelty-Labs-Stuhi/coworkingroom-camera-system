@@ -15,7 +15,7 @@ from .config import CameraConfig, Config
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
-from .handlers import Doorkeeper
+from .handlers import Doorkeeper, Identifier
 from .latest import LatestFrames
 from .ledger import Ledger
 from .notify import TelegramNotifier
@@ -34,6 +34,7 @@ from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
 from .web import WebUI
+from .witness import LeavingWitness
 from .zones import ZoneStore
 
 
@@ -51,6 +52,9 @@ class _Shared:
     notifier: TelegramNotifier | None
     frames: LatestFrames
     zones: ZoneStore
+    # Names the identifying camera has seen leaving, waiting for the counting camera to
+    # attach one to an exit. Shared because it is a message from one camera to the other.
+    witness: LeavingWitness
 
 
 @dataclass(slots=True)
@@ -142,6 +146,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         notifier=notifier,
         frames=frames,
         zones=zones,
+        witness=LeavingWitness(),
     )
     cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     # The UI is started last: it serves frames and drift readings that only exist once the
@@ -187,7 +192,7 @@ def _build_camera(
         thresholds.face_margin,
         face_workers=performance.face_workers,
     )
-    doorkeeper = Doorkeeper(sessions, shared.ledger, thresholds.min_track_age, camera=entry.name)
+    committer = _committer(entry, sessions, shared, thresholds.min_track_age)
     drift = DriftWatch(shared.zones.reference_path(entry.name))
 
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
@@ -219,7 +224,7 @@ def _build_camera(
         ),
         doorway=_monitor(entry, shared.zones),
         sessions=sessions,
-        doorkeeper=doorkeeper,
+        doorkeeper=committer,
         announce=_directional(entry.announce, publisher, announce),
         on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
     )
@@ -229,6 +234,20 @@ def _build_camera(
         sessions=sessions,
         publisher=publisher,
         drift=drift,
+    )
+
+
+def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, min_age: int):
+    """What this camera does with a passage it has recognised: count it, or just name it.
+
+    Both cameras see every passage, so only one may write to the ledger. The doorway camera
+    counts, since the doorframe is what tells a passage from background traffic; the room
+    camera identifies, since it sees a leaver's face where the other sees the back of a head.
+    """
+    if entry.role == "identify":
+        return Identifier(sessions, shared.witness, min_age, camera=entry.name)
+    return Doorkeeper(
+        sessions, shared.ledger, min_age, camera=entry.name, witness=shared.witness
     )
 
 

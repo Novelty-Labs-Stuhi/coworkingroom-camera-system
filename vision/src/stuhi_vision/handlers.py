@@ -19,6 +19,7 @@ from .domain import Crossing, Direction, Outcome, Sighting
 from .identity import Decision
 from .ledger import Ledger
 from .sessions import SessionManager, TrackSession
+from .witness import LeavingWitness
 
 
 class Doorkeeper:
@@ -30,11 +31,13 @@ class Doorkeeper:
         ledger: Ledger,
         min_track_age: int,
         camera: str = "",
+        witness: LeavingWitness | None = None,
     ) -> None:
         self._sessions = sessions
         self._ledger = ledger
         self._min_track_age = min_track_age
         self._camera = camera
+        self._witness = witness
         self._guests = 0
 
     def commit(self, crossing: Crossing) -> Sighting | None:
@@ -68,16 +71,67 @@ class Doorkeeper:
         return name
 
     def _exit(self, session: TrackSession, decision: Decision, timestamp: float) -> str | None:
-        """Leave, named by the face when this camera could see one.
+        """Leave, named by the best evidence available, in order of how direct it is.
 
-        A camera facing people as they leave recognises them exactly as one facing people
-        arriving does. Passing that name to the ledger is the point of having a camera per
-        direction; previously it was computed and then thrown away, and the exit fell back
-        to a body-embedding match that usually resolved to nothing.
+        The camera that can see the doorframe -- and so is the one that can tell an exit from
+        background traffic -- is watching people leave from behind. Its own face match is
+        therefore usually empty, and a body embedding rarely resolves. The room camera saw
+        that same person walk at it face-first moments earlier, so its name is asked for
+        second: better evidence than a body embedding, and worse than a face seen here.
         """
         named = decision.name if decision.outcome is Outcome.NAMED else None
+        if named is None and self._witness is not None:
+            named = self._witness.claim(timestamp)
         return self._ledger.exit(session.body_embedding, timestamp, self._camera, named)
 
     def _new_guest(self) -> str:
         self._guests += 1
         return f"guest-{self._guests}"
+
+
+class Identifier:
+    """A camera whose job is *who*, not how many.
+
+    Same shape as :class:`Doorkeeper` -- it takes a crossing and returns a sighting -- but it
+    writes nothing to the ledger. It only records the name for the doorway camera to claim.
+
+    That division is what stops one passage being counted twice. Both cameras see every
+    passage, so if both committed, one person leaving would be two exits; and this camera is
+    the weaker judge of whether a passage happened at all, since everybody in its view is at
+    the near edge and it has no doorframe to go by. What it is unmatched at is recognising the
+    face of somebody walking towards it.
+
+    The sighting still comes back, so the clip and the face crop reach the review queue: an
+    unrecognised leaver is exactly the footage worth labelling.
+    """
+
+    def __init__(
+        self,
+        sessions: SessionManager,
+        witness: LeavingWitness,
+        min_track_age: int,
+        camera: str = "",
+    ) -> None:
+        self._sessions = sessions
+        self._witness = witness
+        self._min_track_age = min_track_age
+        self._camera = camera
+
+    def commit(self, crossing: Crossing) -> Sighting | None:
+        session = self._sessions.pop(crossing.track_id)
+        if session is None or session.age < self._min_track_age:
+            return None
+
+        decision = session.identity.decide()
+        if crossing.direction is Direction.OUT and decision.outcome is Outcome.NAMED:
+            self._witness.note(decision.name, decision.score, crossing.timestamp)
+
+        return Sighting(
+            timestamp=crossing.timestamp,
+            direction=crossing.direction,
+            name=decision.name if decision.outcome is Outcome.NAMED else None,
+            score=decision.score,
+            outcome=decision.outcome,
+            face_embedding=session.face_embedding,
+            face_crop=session.face_crop,
+        )
