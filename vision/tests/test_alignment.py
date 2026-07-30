@@ -138,3 +138,33 @@ def test_forgetting_stops_watching_without_losing_the_reference_image(tmp_path) 
     assert watch.check(_scene()) is None   # nothing to compare against, so no verdict
     assert watch.latest is None
     assert path.exists()   # the picture of what it used to see is still worth having
+
+
+def test_a_standing_movement_is_reported_once(tmp_path) -> None:
+    watch = DriftWatch(tmp_path / "reference.jpg", tolerance_px=5, confirmations=2)
+    watch.remember(_scene())
+    moved = _scene(shift_x=30)
+
+    for _ in range(2):
+        watch.check(moved)
+    assert watch.has_moved
+    watch.acknowledge()
+
+    # The camera is still in the wrong place, so readings keep coming in over tolerance. Saying
+    # so again is noise: this sent 121 identical Telegram messages in two minutes.
+    for _ in range(20):
+        watch.check(moved)
+    assert watch.has_moved is False
+
+
+def test_a_second_knock_is_reported_even_before_the_first_is_fixed(tmp_path) -> None:
+    watch = DriftWatch(tmp_path / "reference.jpg", tolerance_px=5, confirmations=2)
+    watch.remember(_scene())
+
+    for _ in range(2):
+        watch.check(_scene(shift_x=20))
+    watch.acknowledge()
+
+    for _ in range(3):
+        watch.check(_scene(shift_x=60))
+    assert watch.has_moved

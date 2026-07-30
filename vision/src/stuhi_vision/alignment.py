@@ -67,6 +67,10 @@ class DriftWatch:
         self._size: tuple[int, int] | None = None
         self._over = 0
         self._latest: Drift | None = None
+        # The shift somebody has already been told about. Kept so a standing, unfixed movement
+        # is reported once rather than every few frames -- the counter alone climbs straight
+        # back up, which sent 121 identical messages in two minutes.
+        self._warned: Drift | None = None
         self._load()
 
     @property
@@ -90,8 +94,7 @@ class DriftWatch:
         cv2.imwrite(str(self._path), image)
         self._reference, self._scale = _prepare(image)
         self._size = (image.shape[1], image.shape[0])
-        self._over = 0
-        self._latest = None
+        self._reset()
 
     def forget(self) -> None:
         """Stop watching this view -- called when the zone it was drawn for is removed.
@@ -101,8 +104,13 @@ class DriftWatch:
         """
         self._reference = None
         self._size = None
+        self._reset()
+
+    def _reset(self) -> None:
+        """Forget every reading and anything already reported about them."""
         self._over = 0
         self._latest = None
+        self._warned = None
 
     def check(self, image) -> Drift | None:
         """Measure the shift of an *empty* frame. ``None`` until there is a reference."""
@@ -129,16 +137,31 @@ class DriftWatch:
 
     @property
     def has_moved(self) -> bool:
-        """True once the shift has exceeded tolerance on several consecutive empty frames."""
-        return self._over >= self._confirmations
+        """True once the shift has exceeded tolerance on several consecutive empty frames.
+
+        Stays false for a movement already reported, until the camera moves again by more than
+        the tolerance -- a second knock while the first is still unfixed is worth saying, the
+        same knock every few frames is not.
+        """
+        if self._over < self._confirmations:
+            return False
+        if self._warned is None or self._latest is None:
+            return True
+        moved_again = (
+            abs(self._latest.shift_x - self._warned.shift_x) > self._tolerance
+            or abs(self._latest.shift_y - self._warned.shift_y) > self._tolerance
+        )
+        return moved_again
 
     def acknowledge(self) -> None:
-        """Stop reporting the current movement, without adopting the new view.
+        """Note that the current movement has been reported, without adopting the new view.
 
-        Used after warning somebody: the camera has still moved, and the zone is still wrong,
-        but there is no point repeating it every frame until they redraw it.
+        The camera has still moved and the zone is still wrong; this only stops it being said
+        again. Resetting the counter alone was not enough -- it climbs back past the
+        confirmations within a second or two and reports the same shift over and over.
         """
         self._over = 0
+        self._warned = self._latest
 
     def _load(self) -> None:
         if not self._path.exists():
