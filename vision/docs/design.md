@@ -151,23 +151,39 @@ in *every* frame, which is why plain presence is useless there.
 the command line. Tuning it against the live system is impractical: each attempt costs
 somebody a walk down the corridor, and a negative result says only "nothing happened".
 
-## One camera per direction
+## One camera counts, the other names
 
-A camera at a doorway sees faces going one way and the backs of heads going the other. With
-a camera on each side, **both cameras see every passage** — so each is given the one
-direction it can actually judge (`announce = "in" | "out"`) and ignores the other. Two
-consequences follow, and they are the whole reason for the arrangement:
+A camera at a doorway sees faces going one way and the backs of heads going the other, and
+**both cameras see every passage** — so exactly one of them may commit it. `role` settles
+which, and the split follows what each camera is actually good at rather than being symmetric:
 
-* **No passage is counted twice**, without any cross-camera matching. Comparing tracks
-  between two views is the hard problem in multi-camera vision; assigning directions avoids
-  it completely. Track ids stay meaningless across cameras and nothing tries to reconcile
-  them.
-* **Exits get named by a face**, exactly as entries do. The body-embedding exit match still
-  exists for a single-camera deployment, but with two cameras it is no longer load-bearing —
-  which removes the clothing-dependence that broke the first system.
+* **The doorway camera counts** (`role = "count"`), in both directions. It is the only one
+  that can see the doorframe, which is what separates a passage from somebody crossing the
+  room behind it. It is a poor witness to *who*: it watches leavers from behind.
+* **The room camera names** (`role = "identify"`) and commits nothing. A leaver walks straight
+  at its lens, face first, so it recognises them outright. It is a poor judge of *whether*
+  anyone passed, because everyone in its view sits at the near edge the whole time.
 
-The filter is applied *before* the clip is opened. Filtering after publication would still
-cut, encode and send a second video showing the back of someone's head.
+The handover is a name and a timestamp (`witness.LeavingWitness`), nothing more — the
+recogniser has already decided who somebody is, and a second opinion here would mean two
+answers to one question. The counting camera claims the most recent name when its own face
+match came up empty. **A claim consumes the name**, so two people leaving one after another
+cannot both be recorded as the first, and a name expires after fifteen seconds rather than
+surviving to mislabel some later exit.
+
+Evidence for an exit is used in order of how direct it is: a face seen by the counting camera,
+then the other camera's name, then the body embedding. The body-embedding match still exists
+for a single-camera deployment but is no longer load-bearing — which removes the
+clothing-dependence that broke the first system.
+
+**Nothing matches tracks between views.** Comparing tracks across two cameras is the hard
+problem in multi-camera vision; a role per camera avoids it entirely. Track ids stay
+meaningless across cameras and nothing tries to reconcile them.
+
+`announce` is a narrower question — which directions a camera *films and sends* — and is
+applied before the clip is opened, so a filtered direction costs no encoding. The doorway
+camera films arrivals only: its exit clip would show the back of a head, while the room camera
+films that same exit face-first, which is the clip worth labelling.
 
 **The doorway line belongs to the camera, not the room.** Each has its own view, so its own
 pixel coordinates and its own idea of which side is inside — `inside_side` **flips** between
@@ -177,7 +193,8 @@ rather than a config error.
 
 **Shared exactly once, each internally locked:** the face gallery (a face enrolled from one
 camera must be recognised by the other), the occupancy ledger (one room, one truth), the
-event store, and the review queue. Everything else — tracker, sessions, motion gate, clip
+event store, the review queue, and the leaving witness (a message from one camera to the
+other). Everything else — tracker, sessions, motion gate, clip
 recorder, publisher — is per camera. Each camera runs its own pipeline in its own thread.
 
 **Every event records which camera saw it**, so a drifting count can be traced to the
