@@ -221,3 +221,71 @@ def test_the_edge_test_would_have_discarded_these_passages() -> None:
         )
     )
     assert _finish(edge_based, _approaching(1, [0.64, 0.70, 0.76, 0.82])) == []
+
+
+# --- the travel rule: crossing the box is the passage, its direction is the direction -------
+
+def _travelling(**overrides) -> ThresholdMonitor:
+    """The live doorway camera: a narrow drawn box at the left, judged by direction."""
+    settings = {
+        "zone": (0.0, 0.0, 0.12, 1.0),
+        "edge": "left",
+        "discriminator": "travel",
+        "passing_means": Direction.IN,
+        "min_height": 0.35,
+    }
+    settings.update(overrides)
+    return ThresholdMonitor(ThresholdConfig(**settings))
+
+
+def test_moving_across_the_box_towards_the_edge_counts() -> None:
+    crossings = _run(_travelling(), [0.40, 0.28, 0.16, 0.06, 0.00])
+
+    assert [crossing.direction for crossing in crossings] == [Direction.IN]
+
+
+def test_moving_across_the_box_the_other_way_counts_the_other_way() -> None:
+    crossings = _run(_travelling(), [0.00, 0.06, 0.16, 0.28, 0.40])
+
+    assert [crossing.direction for crossing in crossings] == [Direction.OUT]
+
+
+def test_a_doorframe_away_from_the_picture_edge_still_works() -> None:
+    """The edge rule needed the track to end at the edge of the frame; this one does not.
+
+    A camera can be mounted so the doorframe sits in the middle of the view, and a track is
+    often lost before reaching any edge anyway -- the light is poor and the frame rate low.
+    Under the old rule both were passages silently dropped: neither the first nor the last
+    sighting is at an edge, so it refused to judge.
+    """
+    walk = [0.75, 0.62, 0.50, 0.40]   # crosses a mid-frame doorframe, stops well short of it
+    middle = {"zone": (0.40, 0.0, 0.62, 1.0)}
+
+    assert _run(_travelling(**middle), walk)[0].direction is Direction.IN
+    assert _run(_travelling(discriminator="edge", **middle), walk) == []
+
+
+def test_standing_in_the_doorway_is_not_a_passage() -> None:
+    crossings = _run(_travelling(), [0.10, 0.12, 0.09, 0.11, 0.10])
+
+    assert crossings == []
+
+
+def test_crossing_the_room_behind_the_door_is_still_ignored() -> None:
+    # Never overlaps the box, however far it travels.
+    crossings = _run(_travelling(), [0.80, 0.65, 0.50, 0.35, 0.20])
+
+    assert crossings == []
+
+
+def test_someone_too_small_to_be_at_the_door_is_ignored() -> None:
+    crossings = _run(_travelling(), [0.40, 0.28, 0.16, 0.04], height=0.20)
+
+    assert crossings == []
+
+
+def test_the_direction_of_travel_can_be_read_the_other_way_round() -> None:
+    """If the camera is mounted facing the other way, one word in the config flips it."""
+    crossings = _run(_travelling(passing_means=Direction.OUT), [0.40, 0.28, 0.16, 0.06])
+
+    assert [crossing.direction for crossing in crossings] == [Direction.OUT]

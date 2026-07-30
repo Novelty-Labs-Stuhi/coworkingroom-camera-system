@@ -31,7 +31,10 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--min-height", type=float, default=0.35)
     parser.add_argument("--passing-means", default="in")
     parser.add_argument("--conf", type=float, default=0.3)
-    parser.add_argument("--discriminator", default="edge", choices=["edge", "approach"])
+    parser.add_argument(
+        "--discriminator", default="travel", choices=["edge", "travel", "approach"]
+    )
+    parser.add_argument("--travel-margin", type=float, default=0.08)
     parser.add_argument("--growth-margin", type=float, default=0.12)
     parser.add_argument("--lost-after", type=int, default=6)
     parser.add_argument("--limit", type=int, default=0, help="frames to read (0 = all)")
@@ -131,6 +134,7 @@ def main() -> None:
         min_height=args.min_height,
         discriminator=args.discriminator,
         growth_margin=args.growth_margin,
+        travel_margin=args.travel_margin,
         lost_after=args.lost_after,
     )
     _report(*_replay(args, ThresholdMonitor(config), YOLO("yolov8n.pt")))

@@ -9,11 +9,13 @@ This uses a sturdier fact about the scene. **The doorframe is visible, and a per
 through it occludes it** -- their pixels are in front of the frame, not behind it. Someone
 merely moving in the background is seen *through* the opening and never overlaps it. So:
 
-* a track that overlaps the doorframe zone at some point, and whose **last** sighting is at
-  the far edge, walked *through* and out of view;
-* a track that overlaps the zone and whose **first** sighting is at that edge, came *in*
-  from beyond the door;
-* a track that never overlaps the zone is background traffic and is ignored.
+* a track that never overlaps the doorframe zone is background traffic and is ignored;
+* a track that does overlap it went through the doorway, and **which way it travelled across
+  the zone** is which way it went.
+
+Crossing the box is the passage; the direction of travel is the direction. Nothing depends on
+the person reaching the edge of the picture, so a track lost mid-doorway still counts, and a
+repositioned camera does not invalidate the rule -- only the drawn box, which is redrawable.
 
 Which of those two means "in" is a property of the camera's position, given as
 ``passing_means``. On the room-facing camera the same shape of rule applies with the edge
@@ -36,9 +38,12 @@ Edge = Literal["left", "right", "top", "bottom"]
 # How a finished track is judged.
 #   "edge"     -- did it leave past a frame edge, or arrive from one? Right when the camera
 #                 watches people cross its view sideways, as the doorframe camera does.
+#   "travel"   -- which way did it move across the zone? Right when the doorframe is visible:
+#                 crossing the box *is* the passage, and the direction of travel says which
+#                 way. Needs no frame edge, so it survives a camera being repositioned.
 #   "approach" -- did it grow or shrink? Right when people walk straight at the lens, where
 #                 everyone is already touching the near edge and "at the edge" says nothing.
-Discriminator = Literal["edge", "approach"]
+Discriminator = Literal["edge", "travel", "approach"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +69,10 @@ class ThresholdConfig:
     # How much of the frame height a track must gain or lose for "approach" to call it.
     # Measured passes changed by 0.12-0.28; people merely shifting about changed by ~0.09.
     growth_margin: float = 0.12
+    # How far a track must travel across the frame, along the axis of ``edge``, for "travel"
+    # to call it. Small: somebody passing through a doorway covers most of the frame, while
+    # somebody standing in the doorway talking drifts by a few percent.
+    travel_margin: float = 0.08
     # A person must be at least this tall in frame to be considered at the door at all.
     # Rejects distant figures that happen to line up with the zone.
     min_height: float = 0.35
@@ -152,6 +161,8 @@ class ThresholdMonitor:
         last = _relative(track.last, width, height)
         if self._config.discriminator == "approach":
             return self._by_size(first, last)
+        if self._config.discriminator == "travel":
+            return self._by_travel(first, last)
         return self._by_edge(first, last)
 
     def _by_edge(self, first: _Relative, last: _Relative) -> Direction | None:
@@ -166,6 +177,31 @@ class ThresholdMonitor:
         # Both or neither: someone who stepped in and back out again, or who was only ever
         # at the edge. Not a passage, and guessing would put noise into the count.
         return None
+
+    def _by_travel(self, first: _Relative, last: _Relative) -> Direction | None:
+        """Which way did they move across the box?
+
+        Crossing the doorframe *is* the passage -- the zone gate has already established
+        that -- so all that remains is which way they were going. Movement is measured along
+        the axis the doorway runs across, given by ``edge``: towards that side means the
+        direction ``passing_means``, away from it the opposite.
+
+        This is stronger than asking where the track ended, which was the earlier rule. A
+        person does not have to reach the edge of the picture, or be visible when they get
+        there; a track that is lost mid-doorway still travelled in a direction. It also has
+        no dead zone: the edge rule refused to judge anyone who both arrived at the edge and
+        left by it, which is what a person filling the near side of the frame looks like.
+        """
+        towards_lower = self._config.edge in ("left", "top")
+        if self._config.edge in ("left", "right"):
+            moved = _centre(last.left, last.right) - _centre(first.left, first.right)
+        else:
+            moved = _centre(last.top, last.bottom) - _centre(first.top, first.bottom)
+
+        if abs(moved) < self._config.travel_margin:
+            return None  # stood in the doorway rather than went through it
+        towards_edge = moved < 0 if towards_lower else moved > 0
+        return self._config.passing_means if towards_edge else _opposite(self._config.passing_means)
 
     def _by_size(self, first: _Relative, last: _Relative) -> Direction | None:
         """Grew towards the lens, or shrank away from it?
@@ -217,6 +253,10 @@ def _at_edge(box: _Relative, edge: Edge, margin: float) -> bool:
     if edge == "top":
         return box.top <= margin
     return box.bottom >= 1.0 - margin
+
+
+def _centre(low: float, high: float) -> float:
+    return (low + high) / 2
 
 
 def _opposite(direction: Direction) -> Direction:
