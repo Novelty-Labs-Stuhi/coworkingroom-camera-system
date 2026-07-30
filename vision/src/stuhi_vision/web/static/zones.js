@@ -37,11 +37,15 @@ function build(camera) {
   let start = null;
   let drawn = null;
 
+  // Clamped, because a drag that leaves the picture is a real gesture: people overshoot the
+  // edge on purpose when the doorframe runs right up to it. Losing that drag would be worse
+  // than treating it as "to the edge", which is what they meant.
   const asFraction = (event) => {
     const bounds = image.getBoundingClientRect();
+    const within = (value) => Math.max(0, Math.min(1, value));
     return {
-      x: (event.clientX - bounds.left) / bounds.width,
-      y: (event.clientY - bounds.top) / bounds.height,
+      x: within((event.clientX - bounds.left) / bounds.width),
+      y: within((event.clientY - bounds.top) / bounds.height),
     };
   };
 
@@ -58,21 +62,27 @@ function build(camera) {
       `${Math.max(a.x, b.x).toFixed(2)}, ${Math.max(a.y, b.y).toFixed(2)}]`;
   };
 
-  shot.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    start = asFraction(event);
-    drawn = null;
-    save.disabled = true;
-  });
-  shot.addEventListener('pointermove', (event) => {
-    if (start) render(start, asFraction(event));
-  });
-  shot.addEventListener('pointerup', (event) => {
+  // The move and release are watched on the window rather than the image: a drag that ends
+  // off the picture must still finish the rectangle. Listening on the image alone dropped
+  // every such drag silently, leaving nothing drawn and no hint as to why.
+  const move = (event) => start && render(start, asFraction(event));
+  const finish = (event) => {
     if (!start) return;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', finish);
     drawn = { a: start, b: asFraction(event) };
     start = null;
     render(drawn.a, drawn.b);
     save.disabled = false;
+  };
+
+  shot.addEventListener('pointerdown', (event) => {
+    event.preventDefault();   // no text selection, no image drag
+    start = asFraction(event);
+    drawn = null;
+    save.disabled = true;
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
   });
 
   save.addEventListener('click', () => drawn && store(section, camera.name, drawn));

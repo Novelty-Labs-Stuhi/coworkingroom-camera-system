@@ -166,8 +166,9 @@ details.clip video { width: 100%; margin-top: .4rem; border-radius: 6px; }
   line-height: 0;
   cursor: crosshair;
   touch-action: none;   /* so dragging draws instead of scrolling the page */
+  user-select: none;    /* and instead of selecting the text around it */
 }
-.shot img.live { max-width: 100%; border-radius: 6px; display: block; }
+.shot img.live { max-width: 100%; border-radius: 6px; display: block; -webkit-user-drag: none; }
 .zone-box {
   position: absolute;
   border: 2px solid var(--accent);
