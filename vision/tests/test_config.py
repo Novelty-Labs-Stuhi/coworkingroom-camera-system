@@ -154,3 +154,63 @@ def test_a_camera_can_use_the_doorframe_rule_instead_of_a_line(tmp_path: Path) -
     assert detector.min_height == 0.4
     # No line exists for this camera, so anything that draws one must be able to tell.
     assert cfg.camera.doorway is None
+
+
+def _written(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_roles_decide_which_camera_commits(tmp_path: Path) -> None:
+    """The live arrangement: the doorway camera counts, the room camera only names."""
+    from types import SimpleNamespace
+
+    from stuhi_vision.assembly import _committer
+    from stuhi_vision.handlers import Doorkeeper, Identifier
+    from stuhi_vision.witness import LeavingWitness
+
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "door-in"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.2, 1.0]
+edge = "left"
+passing_means = "in"
+role = "count"
+
+[[camera]]
+name = "door-out"
+target = "http://two/stream"
+zone = [0.0, 0.0, 1.0, 1.0]
+discriminator = "approach"
+passing_means = "out"
+role = "identify"
+""",
+        )
+    )
+    counter, namer = cfg.cameras
+    assert (counter.role, namer.role) == ("count", "identify")
+
+    shared = SimpleNamespace(ledger=object(), witness=LeavingWitness())
+    assert isinstance(_committer(counter, object(), shared, 2), Doorkeeper)
+    assert isinstance(_committer(namer, object(), shared, 2), Identifier)
+
+
+def test_a_camera_counts_unless_told_otherwise(tmp_path: Path) -> None:
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "only"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.2, 1.0]
+""",
+        )
+    )
+    # A single-camera deployment must keep working: nobody would be counting otherwise.
+    assert cfg.cameras[0].role == "count"
