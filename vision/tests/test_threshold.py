@@ -289,3 +289,25 @@ def test_the_direction_of_travel_can_be_read_the_other_way_round() -> None:
     crossings = _run(_travelling(passing_means=Direction.OUT), [0.40, 0.28, 0.16, 0.06])
 
     assert [crossing.direction for crossing in crossings] == [Direction.OUT]
+
+
+def test_a_person_passing_close_to_the_lens_is_not_read_as_standing_still() -> None:
+    """From replayed footage: a real passage whose centre barely moves.
+
+    Walking close past the camera swells the box in both directions at once. This track went
+    from (0.30..0.42) to (0.01..0.68) -- a centre shift of 0.015, which reads as standing
+    still, while the near side swept 0.29 across the picture.
+    """
+    monitor = _travelling()
+    boxes = [(0.30, 0.42), (0.22, 0.50), (0.12, 0.60), (0.01, 0.68)]
+    crossings = []
+    for index, (left, right) in enumerate(boxes):
+        person = TrackedPerson(
+            track_id=1,
+            box=Box(left * WIDTH, 0.10 * HEIGHT, right * WIDTH, HEIGHT),
+        )
+        crossings += monitor.update([person], _frame(index))
+    for index in range(20):
+        crossings += monitor.update([], _frame(100 + index))
+
+    assert [crossing.direction for crossing in crossings] == [Direction.IN]

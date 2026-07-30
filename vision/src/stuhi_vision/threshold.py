@@ -186,6 +186,13 @@ class ThresholdMonitor:
         the axis the doorway runs across, given by ``edge``: towards that side means the
         direction ``passing_means``, away from it the opposite.
 
+        Movement is read from the *leading* side of the box -- the side facing that edge --
+        not its centre. Replaying real passages showed why: someone walking close past the
+        lens has their box swell in both directions at once, so the centre barely moves while
+        they cross the whole picture. One measured passage went from (0.30..0.42) to
+        (0.01..0.68): the centre shifted 0.015, which reads as standing still, while the
+        leading side swept 0.29 across the frame.
+
         This is stronger than asking where the track ended, which was the earlier rule. A
         person does not have to reach the edge of the picture, or be visible when they get
         there; a track that is lost mid-doorway still travelled in a direction. It also has
@@ -193,10 +200,7 @@ class ThresholdMonitor:
         left by it, which is what a person filling the near side of the frame looks like.
         """
         towards_lower = self._config.edge in ("left", "top")
-        if self._config.edge in ("left", "right"):
-            moved = _centre(last.left, last.right) - _centre(first.left, first.right)
-        else:
-            moved = _centre(last.top, last.bottom) - _centre(first.top, first.bottom)
+        moved = _leading(last, self._config.edge) - _leading(first, self._config.edge)
 
         if abs(moved) < self._config.travel_margin:
             return None  # stood in the doorway rather than went through it
@@ -255,8 +259,9 @@ def _at_edge(box: _Relative, edge: Edge, margin: float) -> bool:
     return box.bottom >= 1.0 - margin
 
 
-def _centre(low: float, high: float) -> float:
-    return (low + high) / 2
+def _leading(box: _Relative, edge: Edge) -> float:
+    """The side of the box facing ``edge`` -- the part of a person that arrives first."""
+    return {"left": box.left, "right": box.right, "top": box.top, "bottom": box.bottom}[edge]
 
 
 def _opposite(direction: Direction) -> Direction:
