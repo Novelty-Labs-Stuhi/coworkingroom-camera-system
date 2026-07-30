@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -26,6 +26,7 @@ from starlette.requests import Request
 
 from ..names import parse_names
 from ..review import ReviewQueue
+from ..zones import DrawnZone, ZoneStore
 
 _HERE = Path(__file__).parent
 
@@ -37,6 +38,16 @@ class LabelRequest(BaseModel):
 
 class DismissRequest(BaseModel):
     sighting_id: str
+
+
+class ZoneRequest(BaseModel):
+    """A rectangle dragged on a camera's live frame, in fractions of it."""
+
+    camera: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
 
 
 def _as_dict(record, groups: dict[int, int] | None = None) -> dict:
@@ -153,6 +164,79 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})
 
 
+def _camera_states(frames, zones: ZoneStore, drift: dict) -> list[dict]:
+    """Each camera's drawn zone and whether its view has shifted since that was drawn."""
+    listed = []
+    for name in frames.cameras:
+        watch = drift.get(name)
+        reading = watch.latest if watch else None
+        zone = zones.get(name)
+        listed.append(
+            {
+                "name": name,
+                "zone": zone.as_tuple() if zone else None,
+                "has_reference": bool(watch and watch.has_reference),
+                "moved": bool(watch and watch.has_moved),
+                "shift_px": round(reading.magnitude, 1) if reading else None,
+                "shift": reading.readable if reading else None,
+            }
+        )
+    return listed
+
+
+def _add_camera_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> None:
+    """Live frames, the drawn zones, and whether a camera has been knocked.
+
+    Frames come from the pipeline rather than the camera: these boards serve one client at a
+    time, so while the pipeline is streaming nothing else can open them.
+    """
+
+    @app.get("/api/cameras")
+    def cameras() -> JSONResponse:
+        return JSONResponse({"cameras": _camera_states(frames, zones, drift)})
+
+    @app.get("/frame/{camera}.jpg")
+    def frame(camera: str) -> Response:
+        jpeg = frames.jpeg(camera)
+        if jpeg is None:
+            raise HTTPException(status_code=404, detail="no frame from that camera yet")
+        # No caching: the point of this endpoint is that it is current.
+        return Response(
+            content=jpeg,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/api/zone")
+    def set_zone(body: ZoneRequest) -> JSONResponse:
+        """Store a drawn zone, and adopt the frame it was drawn on as the drift reference.
+
+        The two belong together: a zone means something only for as long as the view it was
+        drawn on holds, so saving one resets what "moved" is measured against.
+        """
+        image = frames.raw(body.camera)
+        if image is None:
+            raise HTTPException(status_code=404, detail="no frame from that camera yet")
+        try:
+            zone = DrawnZone.from_corners(body.x1, body.y1, body.x2, body.y2)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        zones.save(body.camera, zone)
+        watch = drift.get(body.camera)
+        if watch is not None:
+            watch.remember(image)
+        return JSONResponse(
+            {
+                "camera": body.camera,
+                "zone": zone.as_tuple(),
+                # The running pipeline built its detector at startup, so it keeps the old
+                # zone until restarted. Saying so beats letting somebody assume otherwise.
+                "applies_after_restart": True,
+            }
+        )
+
+
 def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/media/{sighting_id}.mp4")
     def clip(sighting_id: str) -> FileResponse:
@@ -169,7 +253,7 @@ def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
         return FileResponse(path, media_type="image/jpeg")
 
 
-def create_app(review: ReviewQueue) -> FastAPI:
+def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> FastAPI:
     """Build the labelling UI over an existing review queue."""
     app = FastAPI(title="stuhi labelling")
     templates = Jinja2Templates(directory=str(_HERE / "templates"))
@@ -179,16 +263,33 @@ def create_app(review: ReviewQueue) -> FastAPI:
     def index(request: Request):
         return templates.TemplateResponse(request, "index.html")
 
+    @app.get("/zones")
+    def zones_page(request: Request):
+        return templates.TemplateResponse(request, "zones.html")
+
     _add_api_routes(app, review)
     _add_media_routes(app, review)
+    if frames is not None and zones is not None:
+        _add_camera_routes(app, frames, zones, drift or {})
     return app
 
 
 class WebUI:
     """Runs the labelling UI in a background thread for the lifetime of the pipeline."""
 
-    def __init__(self, review: ReviewQueue, host: str = "0.0.0.0", port: int = 8800) -> None:
+    def __init__(
+        self,
+        review: ReviewQueue,
+        frames=None,
+        zones=None,
+        drift=None,
+        host: str = "0.0.0.0",
+        port: int = 8800,
+    ) -> None:
         self._review = review
+        self._frames = frames
+        self._zones = zones
+        self._drift = drift
         self._host = host
         self._port = port
         self._server = None
@@ -198,7 +299,7 @@ class WebUI:
         import uvicorn
 
         config = uvicorn.Config(
-            create_app(self._review),
+            create_app(self._review, self._frames, self._zones, self._drift),
             host=self._host,
             port=self._port,
             log_level="warning",

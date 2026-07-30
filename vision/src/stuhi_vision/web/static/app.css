@@ -152,3 +152,33 @@ details.clip summary {
 }
 details.clip summary:hover { color: var(--text); }
 details.clip video { width: 100%; margin-top: .4rem; border-radius: 6px; }
+
+/* --- the zone-drawing page ------------------------------------------------------------ */
+.camera { margin: 0 0 2rem; }
+.camera h2 { margin: 0 0 .2rem; font-size: 1.05rem; }
+
+/* The frame and the zone share one positioned box, so the zone can be placed in percentages
+   of the displayed image and stay correct at any width. */
+.shot {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  cursor: crosshair;
+  touch-action: none;   /* so dragging draws instead of scrolling the page */
+}
+.shot img.live { max-width: 100%; border-radius: 6px; display: block; }
+.zone-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgb(from var(--accent) r g b / 22%);
+  pointer-events: none;
+}
+
+.state { margin: .1rem 0 .5rem; font-size: .85rem; color: var(--muted); }
+.state.ok { color: var(--ok); }
+.state.bad { color: #f0776a; }
+.numbers { margin: .4rem 0; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.actions { display: flex; gap: .5rem; }
+.actions .refresh { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 400; }
+.actions .refresh:hover { border-color: var(--accent); color: var(--text); filter: none; }

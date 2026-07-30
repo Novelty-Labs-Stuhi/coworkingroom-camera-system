@@ -7,14 +7,16 @@ modules themselves stay free of construction logic and the CLI stays thin.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from .alignment import DriftWatch
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
 from .handlers import Doorkeeper
+from .latest import LatestFrames
 from .ledger import Ledger
 from .notify import TelegramNotifier
 from .pipeline import FrameObserver, Pipeline
@@ -32,6 +34,7 @@ from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
 from .web import WebUI
+from .zones import ZoneStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,8 @@ class _Shared:
     ledger: Ledger
     review: ReviewQueue
     notifier: TelegramNotifier | None
+    frames: LatestFrames
+    zones: ZoneStore
 
 
 @dataclass(slots=True)
@@ -61,6 +66,7 @@ class Camera:
     pipeline: Pipeline
     sessions: SessionManager
     publisher: SightingPublisher
+    drift: DriftWatch
 
     def close(self) -> None:
         # Anything still waiting for its clip must go out, or a crossing just before
@@ -77,6 +83,8 @@ class Application:
     store: EventStore
     review: ReviewQueue
     ledger: Ledger
+    frames: LatestFrames
+    zones: ZoneStore
     notifier: TelegramNotifier | None = None
     web: WebUI | None = None
 
@@ -124,17 +132,38 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     # Both labelling routes share this one queue and gallery, so a label from either takes
     # effect on the next frame and the same sighting can never be counted twice.
     web: WebUI | None = None
+
+    frames = LatestFrames(encode_jpeg)
+    zones = ZoneStore(config.paths.review_dir.parent / "zones")
+    shared = _Shared(
+        gallery=gallery,
+        ledger=ledger,
+        review=review,
+        notifier=notifier,
+        frames=frames,
+        zones=zones,
+    )
+    cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
+    # The UI is started last: it serves frames and drift readings that only exist once the
+    # cameras have been built.
     if config.web.enabled:
-        web = WebUI(review, host=config.web.host, port=config.web.port)
+        web = WebUI(
+            review,
+            frames=frames,
+            zones=zones,
+            drift={camera.name: camera.drift for camera in cameras},
+            host=config.web.host,
+            port=config.web.port,
+        )
         web.start()
 
-    shared = _Shared(gallery=gallery, ledger=ledger, review=review, notifier=notifier)
-    cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     return Application(
         cameras=cameras,
         store=store,
         review=review,
         ledger=ledger,
+        frames=frames,
+        zones=zones,
         notifier=notifier,
         web=web,
     )
@@ -159,6 +188,7 @@ def _build_camera(
         face_workers=performance.face_workers,
     )
     doorkeeper = Doorkeeper(sessions, shared.ledger, thresholds.min_track_age, camera=entry.name)
+    drift = DriftWatch(shared.zones.reference_path(entry.name))
 
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
     # frames that happened to follow the commit.
@@ -187,20 +217,34 @@ def _build_camera(
             gate=MotionGate(min_fraction=performance.motion_min_fraction),
             region_builder=_region_builder(entry, performance.crop_padding),
         ),
-        doorway=_monitor(entry),
+        doorway=_monitor(entry, shared.zones),
         sessions=sessions,
         doorkeeper=doorkeeper,
         announce=_directional(entry.announce, publisher, announce),
-        on_frame=_frame_hook(publisher, observer),
+        on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
     )
-    return Camera(name=entry.name, pipeline=pipeline, sessions=sessions, publisher=publisher)
+    return Camera(
+        name=entry.name,
+        pipeline=pipeline,
+        sessions=sessions,
+        publisher=publisher,
+        drift=drift,
+    )
 
 
-def _monitor(entry: CameraConfig):
-    """The passage detector this camera configured. Both share one update() signature."""
-    if isinstance(entry.detector, ThresholdConfig):
-        return ThresholdMonitor(entry.detector)
-    return DoorwayMonitor(entry.detector)
+def _monitor(entry: CameraConfig, zones: ZoneStore):
+    """The passage detector this camera configured, with any hand-drawn zone layered on.
+
+    A zone drawn in the UI wins over the one in the config: it was drawn by somebody looking
+    at the actual view, which the config's numbers can only approximate.
+    """
+    if not isinstance(entry.detector, ThresholdConfig):
+        return DoorwayMonitor(entry.detector)
+    drawn = zones.get(entry.name)
+    detector = entry.detector
+    if drawn is not None:
+        detector = replace(detector, zone=drawn.as_tuple())
+    return ThresholdMonitor(detector)
 
 
 def _region_builder(entry: CameraConfig, padding: float):
@@ -249,15 +293,41 @@ def _directional(reported: str, publisher: SightingPublisher, announce):
     return hold
 
 
-def _frame_hook(publisher: SightingPublisher, observer: FrameObserver | None):
-    """Drive the publisher every frame, then pass the frame to any caller's observer."""
+def _frame_hook(
+    publisher: SightingPublisher,
+    observer: FrameObserver | None,
+    camera: str,
+    shared: _Shared,
+    drift: DriftWatch,
+):
+    """Per frame: advance the publisher, keep the frame, and watch for a moved camera."""
 
     def on_frame(frame, people, crossings) -> None:
         publisher.advance(people_present=bool(people))
+        shared.frames.put(camera, frame.image)
+        # Only empty frames: a person is a large moving object and would drag the
+        # correlation with them, reading as a camera that had moved.
+        if not people:
+            drift.check(frame.image)
+            if drift.has_moved:
+                _warn_moved(camera, drift, shared)
         if observer is not None:
             observer(frame, people, crossings)
 
     return on_frame
+
+
+def _warn_moved(camera: str, drift: DriftWatch, shared: _Shared) -> None:
+    """Say once that a camera has moved, then stop until somebody redraws its zone."""
+    reading = drift.latest.readable if drift.latest else "unknown"
+    message = (
+        f"{camera} appears to have moved ({reading}). Its zone was drawn on the old view, "
+        f"so passages may be miscounted until it is redrawn."
+    )
+    print(f"  -> {message}")
+    if shared.notifier is not None:
+        shared.notifier.send_note(message)
+    drift.acknowledge()
 
 
 def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce):

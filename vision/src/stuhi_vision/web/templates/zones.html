@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stuhi zones</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <h1>Where is the doorframe?</h1>
+    <p class="hint">
+      Drag a rectangle over the doorframe &mdash; the part of the picture a person
+      <em>covers</em> as they pass through, rather than the opening they are seen through.
+      Somebody who never overlaps it is treated as background and ignored.
+    </p>
+    <p class="hint">
+      Saving also stores this frame as the reference for that camera, so you are told if it
+      gets knocked and the zone needs drawing again. <a href="/">Back to labelling</a>
+    </p>
+  </header>
+
+  <div id="cameras"></div>
+
+  <template id="camera-template">
+    <section class="camera">
+      <h2 class="name"></h2>
+      <p class="state"></p>
+      <div class="shot">
+        <img class="live" alt="live view from this camera">
+        <div class="zone-box" hidden></div>
+      </div>
+      <p class="numbers"></p>
+      <div class="actions">
+        <button type="button" class="save" disabled>Save zone</button>
+        <button type="button" class="refresh">Refresh frame</button>
+      </div>
+      <p class="result" role="status"></p>
+    </section>
+  </template>
+
+  <script src="/static/zones.js"></script>
+</body>
+</html>

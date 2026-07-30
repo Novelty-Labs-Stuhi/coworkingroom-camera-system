@@ -94,6 +94,17 @@ class TelegramNotifier:
             files={"video": (path.name, path.read_bytes(), "video/mp4")},
         )
 
+    def send_note(self, text: str) -> None:
+        """Send a plain message about the system itself, never raising.
+
+        Used for things a person needs to know that are not sightings -- a camera that seems
+        to have been knocked, for instance. A chat outage must not disturb the pipeline.
+        """
+        try:
+            self._send_message(text)
+        except Exception as exc:
+            print(f"  -> telegram note failed: {exc}")
+
     def send_test(self, text: str) -> None:
         """Send one message, letting errors surface -- used to verify the credentials."""
         response = self._client.post(
