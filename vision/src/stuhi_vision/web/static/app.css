@@ -181,5 +181,8 @@ details.clip video { width: 100%; margin-top: .4rem; border-radius: 6px; }
 .state.bad { color: #f0776a; }
 .numbers { margin: .4rem 0; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .actions { display: flex; gap: .5rem; }
-.actions .refresh { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 400; }
-.actions .refresh:hover { border-color: var(--accent); color: var(--text); filter: none; }
+.actions .refresh,
+.actions .remove { background: transparent; border-color: var(--line); color: var(--muted); font-weight: 400; }
+.actions .refresh:hover,
+.actions .remove:hover:not(:disabled) { border-color: var(--accent); color: var(--text); filter: none; }
+.actions .remove:hover:not(:disabled) { border-color: #f0776a; color: #f0776a; }

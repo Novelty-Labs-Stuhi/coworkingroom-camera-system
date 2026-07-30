@@ -61,3 +61,20 @@ def test_redrawing_replaces_rather_than_accumulates(tmp_path) -> None:
 
     assert ZoneStore(tmp_path).get("door-in").as_tuple() == (0.1, 0.0, 0.5, 1.0)
     assert list(ZoneStore(tmp_path).all()) == ["door-in"]
+
+
+def test_removing_a_zone_survives_a_reload(tmp_path) -> None:
+    store = ZoneStore(tmp_path)
+    store.save("door-in", DrawnZone.from_corners(0.4, 0.0, 0.6, 1.0))
+    store.save("door-out", DrawnZone.from_corners(0.0, 0.0, 1.0, 1.0))
+
+    assert store.remove("door-in") is True
+    # Reloaded, because a removal that only happened in memory would come back on restart --
+    # the zone would be gone from the page and still in use by the pipeline.
+    reloaded = ZoneStore(tmp_path)
+    assert reloaded.get("door-in") is None
+    assert reloaded.get("door-out") is not None
+
+
+def test_removing_a_zone_that_was_never_drawn_says_so(tmp_path) -> None:
+    assert ZoneStore(tmp_path).remove("door-in") is False

@@ -77,6 +77,11 @@ class DriftWatch:
     def has_reference(self) -> bool:
         return self._reference is not None
 
+    @property
+    def tolerance_px(self) -> float:
+        """How far the view may shift before it stops matching the zone drawn on it."""
+        return self._tolerance
+
     def remember(self, image) -> None:
         """Adopt this frame as the reference -- called when a zone is drawn."""
         import cv2
@@ -85,6 +90,17 @@ class DriftWatch:
         cv2.imwrite(str(self._path), image)
         self._reference, self._scale = _prepare(image)
         self._size = (image.shape[1], image.shape[0])
+        self._over = 0
+        self._latest = None
+
+    def forget(self) -> None:
+        """Stop watching this view -- called when the zone it was drawn for is removed.
+
+        The reference image is left on disk. It costs nothing, and deleting the only record of
+        what the camera used to see, to serve a button press, is a poor trade.
+        """
+        self._reference = None
+        self._size = None
         self._over = 0
         self._latest = None
 

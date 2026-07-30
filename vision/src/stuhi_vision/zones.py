@@ -72,12 +72,23 @@ class ZoneStore:
     def save(self, camera: str, zone: DrawnZone) -> None:
         with self._lock:
             self._zones[camera] = zone
-            self._dir.mkdir(parents=True, exist_ok=True)
-            payload = {
-                name: {"x1": z.x1, "y1": z.y1, "x2": z.x2, "y2": z.y2}
-                for name, z in self._zones.items()
-            }
-            self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            self._write()
+
+    def remove(self, camera: str) -> bool:
+        """Forget this camera's drawn zone, falling back to the config. False if it had none."""
+        with self._lock:
+            if self._zones.pop(camera, None) is None:
+                return False
+            self._write()
+            return True
+
+    def _write(self) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            name: {"x1": z.x1, "y1": z.y1, "x2": z.x2, "y2": z.y2}
+            for name, z in self._zones.items()
+        }
+        self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _load(self) -> None:
         if not self._path.exists():

@@ -15,6 +15,11 @@
       Somebody who never overlaps it is treated as background and ignored.
     </p>
     <p class="hint">
+      Only the doorway-facing camera sees the doorframe, so it is the only one that needs a
+      zone. The room-facing camera is judged by how a person's size changes instead; drawing a
+      zone on it does nothing except start watching that view for movement too.
+    </p>
+    <p class="hint">
       Saving also stores this frame as the reference for that camera, so you are told if it
       gets knocked and the zone needs drawing again. <a href="/">Back to labelling</a>
     </p>
@@ -33,6 +38,7 @@
       <p class="numbers"></p>
       <div class="actions">
         <button type="button" class="save" disabled>Save zone</button>
+        <button type="button" class="remove" disabled>Remove zone</button>
         <button type="button" class="refresh">Refresh frame</button>
       </div>
       <p class="result" role="status"></p>

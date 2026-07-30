@@ -179,6 +179,9 @@ def _camera_states(frames, zones: ZoneStore, drift: dict) -> list[dict]:
                 "moved": bool(watch and watch.has_moved),
                 "shift_px": round(reading.magnitude, 1) if reading else None,
                 "shift": reading.readable if reading else None,
+                # Sent so the page can call a view steady only when it is. "moved" goes
+                # quiet once somebody has been told, which is not the same as recovered.
+                "tolerance_px": watch.tolerance_px if watch else None,
             }
         )
     return listed
@@ -206,6 +209,10 @@ def _add_camera_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> N
             media_type="image/jpeg",
             headers={"Cache-Control": "no-store"},
         )
+
+
+def _add_zone_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> None:
+    """Writing and clearing the hand-drawn zones."""
 
     @app.post("/api/zone")
     def set_zone(body: ZoneRequest) -> JSONResponse:
@@ -235,6 +242,20 @@ def _add_camera_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> N
                 "applies_after_restart": True,
             }
         )
+
+    @app.delete("/api/zone/{camera}")
+    def clear_zone(camera: str) -> JSONResponse:
+        """Drop a drawn zone, so the camera falls back to whatever the config says.
+
+        Movement watching goes with it: it exists to tell you a drawn zone has gone stale, and
+        with no drawn zone there is nothing to redraw.
+        """
+        if not zones.remove(camera):
+            raise HTTPException(status_code=404, detail="that camera has no drawn zone")
+        watch = drift.get(camera)
+        if watch is not None:
+            watch.forget()
+        return JSONResponse({"camera": camera, "zone": None, "applies_after_restart": True})
 
 
 def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
@@ -271,6 +292,7 @@ def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> Fast
     _add_media_routes(app, review)
     if frames is not None and zones is not None:
         _add_camera_routes(app, frames, zones, drift or {})
+        _add_zone_routes(app, frames, zones, drift or {})
     return app
 
 

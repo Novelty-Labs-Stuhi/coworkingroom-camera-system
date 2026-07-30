@@ -124,3 +124,17 @@ def test_redrawing_adopts_the_new_view(tmp_path) -> None:
 
     assert watch.has_moved is False
     assert watch.check(_scene(shift_x=40)).magnitude < 2.0
+
+
+def test_forgetting_stops_watching_without_losing_the_reference_image(tmp_path) -> None:
+    path = tmp_path / "reference.jpg"
+    watch = DriftWatch(path)
+    watch.remember(_scene())
+    assert watch.has_reference
+
+    watch.forget()
+
+    assert watch.has_reference is False
+    assert watch.check(_scene()) is None   # nothing to compare against, so no verdict
+    assert watch.latest is None
+    assert path.exists()   # the picture of what it used to see is still worth having
