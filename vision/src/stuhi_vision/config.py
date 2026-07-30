@@ -180,6 +180,8 @@ def _detector(raw: dict) -> DoorwayConfig | ThresholdConfig:
             edge=raw.get("edge", "left"),
             margin=float(raw.get("margin", 0.12)),
             passing_means=Direction(raw.get("passing_means", "in")),
+            discriminator=raw.get("discriminator", "edge"),
+            growth_margin=float(raw.get("growth_margin", 0.12)),
             min_height=float(raw.get("min_height", 0.35)),
             lost_after=int(raw.get("lost_after", 6)),
         )

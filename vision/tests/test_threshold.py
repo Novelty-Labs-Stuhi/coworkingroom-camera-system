@@ -139,3 +139,85 @@ def test_the_bottom_edge_works_for_a_room_facing_camera() -> None:
         crossings += monitor.update([], _frame(50 + index))
 
     assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def _approaching(track_id: int, heights, width_fraction: float = 0.3):
+    """A person whose apparent size changes while staying against the bottom edge.
+
+    Which is what the room-facing camera sees: measured tracks began *and* ended touching
+    the bottom (0.97-1.00 of the frame), so only the size change distinguishes them.
+    """
+    for height in heights:
+        yield TrackedPerson(
+            track_id=track_id,
+            box=Box(
+                0.4 * WIDTH,
+                (1 - height) * HEIGHT,
+                (0.4 + width_fraction) * WIDTH,
+                HEIGHT,  # always flush against the bottom edge
+            ),
+        )
+
+
+def _approach_monitor(**overrides) -> ThresholdMonitor:
+    return ThresholdMonitor(
+        ThresholdConfig(
+            zone=(0.0, 0.0, 1.0, 1.0),
+            discriminator="approach",
+            passing_means=Direction.OUT,
+            min_height=0.45,
+            growth_margin=0.12,
+            **overrides,
+        )
+    )
+
+
+def _finish(monitor: ThresholdMonitor, people_frames) -> list:
+    crossings = []
+    for index, person in enumerate(people_frames):
+        crossings += monitor.update([person], _frame(index))
+    for index in range(20):
+        crossings += monitor.update([], _frame(200 + index))
+    return crossings
+
+
+def test_growing_towards_the_lens_is_a_passage_out() -> None:
+    # Measured: heights 0.64 -> 0.82 as someone walked at the camera on their way out.
+    crossings = _finish(_approach_monitor(), _approaching(1, [0.64, 0.70, 0.76, 0.82]))
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def test_shrinking_away_from_the_lens_is_the_opposite() -> None:
+    # Measured: 0.69 -> 0.41 as someone who had come in walked away into the room.
+    crossings = _finish(_approach_monitor(), _approaching(1, [0.69, 0.60, 0.50, 0.41]))
+
+    assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_barely_changing_size_is_not_a_passage() -> None:
+    # Measured at ~0.09: somebody shifting about near the door rather than going through.
+    crossings = _finish(_approach_monitor(), _approaching(1, [0.70, 0.66, 0.63, 0.61]))
+
+    assert crossings == []
+
+
+def test_a_seated_person_across_the_room_is_ignored() -> None:
+    # That view has somebody visible in every frame; only size keeps them out of the count.
+    crossings = _finish(_approach_monitor(), _approaching(1, [0.29, 0.28, 0.29, 0.28]))
+
+    assert crossings == []
+
+
+def test_the_edge_test_would_have_discarded_these_passages() -> None:
+    # Why "approach" exists: flush against the bottom throughout, so the edge test sees
+    # "arrived at the edge AND left at the edge" and calls it no passage at all.
+    edge_based = ThresholdMonitor(
+        ThresholdConfig(
+            zone=(0.0, 0.0, 1.0, 1.0),
+            edge="bottom",
+            passing_means=Direction.OUT,
+            min_height=0.45,
+        )
+    )
+    assert _finish(edge_based, _approaching(1, [0.64, 0.70, 0.76, 0.82])) == []

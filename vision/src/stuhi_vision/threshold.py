@@ -33,6 +33,13 @@ from .domain import Box, Crossing, Direction, Frame, TrackedPerson
 
 Edge = Literal["left", "right", "top", "bottom"]
 
+# How a finished track is judged.
+#   "edge"     -- did it leave past a frame edge, or arrive from one? Right when the camera
+#                 watches people cross its view sideways, as the doorframe camera does.
+#   "approach" -- did it grow or shrink? Right when people walk straight at the lens, where
+#                 everyone is already touching the near edge and "at the edge" says nothing.
+Discriminator = Literal["edge", "approach"]
+
 
 @dataclass(frozen=True, slots=True)
 class ThresholdConfig:
@@ -48,6 +55,15 @@ class ThresholdConfig:
     edge: Edge = "left"
     margin: float = 0.12
     passing_means: Direction = Direction.IN
+    # Which question to ask of a finished track. Measured on the room-facing camera, every
+    # track began *and* ended touching the bottom edge (0.97-1.00 of the frame height),
+    # because anyone that close fills the picture downwards -- so the edge test could not
+    # tell an arrival from a departure and discarded nearly every real passage. Size change
+    # separates them cleanly there: walking at the lens grows, walking away shrinks.
+    discriminator: Discriminator = "edge"
+    # How much of the frame height a track must gain or lose for "approach" to call it.
+    # Measured passes changed by 0.12-0.28; people merely shifting about changed by ~0.09.
+    growth_margin: float = 0.12
     # A person must be at least this tall in frame to be considered at the door at all.
     # Rejects distant figures that happen to line up with the zone.
     min_height: float = 0.35
@@ -132,12 +148,16 @@ class ThresholdMonitor:
         if not track.touched_zone or track.tallest < self._config.min_height:
             return None  # background traffic, or never close enough to be at the door
 
-        left_at_edge = _at_edge(
-            _relative(track.last, width, height), self._config.edge, self._config.margin
-        )
-        arrived_at_edge = _at_edge(
-            _relative(track.first, width, height), self._config.edge, self._config.margin
-        )
+        first = _relative(track.first, width, height)
+        last = _relative(track.last, width, height)
+        if self._config.discriminator == "approach":
+            return self._by_size(first, last)
+        return self._by_edge(first, last)
+
+    def _by_edge(self, first: _Relative, last: _Relative) -> Direction | None:
+        """Left past the edge, or arrived from it?"""
+        left_at_edge = _at_edge(last, self._config.edge, self._config.margin)
+        arrived_at_edge = _at_edge(first, self._config.edge, self._config.margin)
 
         if left_at_edge and not arrived_at_edge:
             return self._config.passing_means
@@ -146,6 +166,19 @@ class ThresholdMonitor:
         # Both or neither: someone who stepped in and back out again, or who was only ever
         # at the edge. Not a passage, and guessing would put noise into the count.
         return None
+
+    def _by_size(self, first: _Relative, last: _Relative) -> Direction | None:
+        """Grew towards the lens, or shrank away from it?
+
+        For a camera people walk straight at, this is the only usable signal: they are
+        touching the near edge the whole time, so where they start and end tells nothing.
+        """
+        change = last.height - first.height
+        if change >= self._config.growth_margin:
+            return self._config.passing_means  # came at the lens: through the door
+        if change <= -self._config.growth_margin:
+            return _opposite(self._config.passing_means)
+        return None  # barely changed size: milling about rather than passing
 
 
 @dataclass(frozen=True, slots=True)
