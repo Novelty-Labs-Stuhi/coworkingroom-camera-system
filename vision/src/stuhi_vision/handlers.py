@@ -82,6 +82,10 @@ class Doorkeeper:
         named = decision.name if decision.outcome is Outcome.NAMED else None
         if named is None and self._witness is not None:
             named = self._witness.claim(timestamp)
+            if named is not None:
+                # Printed because this is the one step no single camera can verify: whether
+                # the handover actually happened is otherwise invisible in the log.
+                print(f"  -> exit named {named} by the other camera")
         return self._ledger.exit(session.body_embedding, timestamp, self._camera, named)
 
     def _new_guest(self) -> str:
@@ -125,6 +129,7 @@ class Identifier:
         decision = session.identity.decide()
         if crossing.direction is Direction.OUT and decision.outcome is Outcome.NAMED:
             self._witness.note(decision.name, decision.score, crossing.timestamp)
+            print(f"  -> {self._camera} saw {decision.name} leaving ({decision.score:.2f})")
 
         return Sighting(
             timestamp=crossing.timestamp,
