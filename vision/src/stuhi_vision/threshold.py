@@ -144,8 +144,8 @@ class ThresholdMonitor:
 
     def _observe(self, person: TrackedPerson, width: int, height: int) -> None:
         box = person.box
-        relative = _relative(box, width, height)
-        tall_enough = relative.height >= self._config.min_height
+        shape = relative(box, width, height)
+        tall_enough = shape.height >= self._config.min_height
 
         track = self._tracks.get(person.track_id)
         if track is None:
@@ -157,8 +157,8 @@ class ThresholdMonitor:
             track.last_seen = self._frame_index
             track.frames += 1
 
-        track.tallest = max(track.tallest, relative.height)
-        if tall_enough and _overlaps(relative, self._config.zone):
+        track.tallest = max(track.tallest, shape.height)
+        if tall_enough and overlaps(shape, self._config.zone):
             track.touched_zone = True
 
     def _resolve_finished(self, present: set[int], frame: Frame) -> list[Crossing]:
@@ -183,8 +183,8 @@ class ThresholdMonitor:
         if not track.touched_zone or track.tallest < self._config.min_height:
             return None  # background traffic, or never close enough to be at the door
 
-        first = _relative(track.first, width, height)
-        last = _relative(track.last, width, height)
+        first = relative(track.first, width, height)
+        last = relative(track.last, width, height)
         if self._config.discriminator == "approach":
             direction = self._by_size(first, last)
         elif self._config.discriminator == "travel":
@@ -279,7 +279,8 @@ class _Relative:
         return self.bottom - self.top
 
 
-def _relative(box: Box, width: int, height: int) -> _Relative:
+def relative(box: Box, width: int, height: int) -> _Relative:
+    """A detected box as fractions of the frame. Public: the coverage rule needs it too."""
     return _Relative(
         left=box.x1 / width,
         top=box.y1 / height,
@@ -288,7 +289,8 @@ def _relative(box: Box, width: int, height: int) -> _Relative:
     )
 
 
-def _overlaps(box: _Relative, zone: tuple[float, float, float, float]) -> bool:
+def overlaps(box: _Relative, zone: tuple[float, float, float, float]) -> bool:
+    """Whether a box is over the drawn zone at all. Public: the coverage rule needs it too."""
     x1, y1, x2, y2 = zone
     return box.right > x1 and box.left < x2 and box.bottom > y1 and box.top < y2
 

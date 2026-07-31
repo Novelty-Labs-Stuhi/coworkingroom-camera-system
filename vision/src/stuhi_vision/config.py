@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from .domain import Direction
+from .occlusion import CoverageConfig
 from .threshold import ThresholdConfig
 
 Point = tuple[float, float]
@@ -23,6 +24,13 @@ Reported = Literal["in", "out", "both"]
 # only supplies the name of whoever it saw leaving, for the counting camera to attach to its
 # exit. Both cameras see every passage, so exactly one of them may count it.
 Role = Literal["count", "identify"]
+# How a camera recognises a passage.
+#   "tracks"   -- from YOLO's boxes: which way a tracked person crossed the drawn box.
+#   "coverage" -- from pixel change per vertical slice of the drawn box: the order the slices
+#                 light gives the direction, and the tracker only has to confirm a person.
+#                 Chosen because coverage grows as somebody comes closer, where detection
+#                 weakens, and an order of events survives their outline changing shape.
+Rule = Literal["tracks", "coverage"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +66,8 @@ class CameraConfig:
     How a passage is recognised belongs to the camera too, because each has its own view:
     its own pixel coordinates, its own idea of which side is inside, its own doorframe.
     ``detector`` is either a :class:`DoorwayConfig` (a line the foot point crosses) or a
-    :class:`ThresholdConfig` (occluding the doorframe and leaving at an edge).
+    :class:`ThresholdConfig` (the drawn doorframe box). ``rule`` then chooses what reads that
+    box: the tracked person's own movement, or pixel change per vertical slice of it.
     """
 
     name: str
@@ -66,6 +75,8 @@ class CameraConfig:
     detector: DoorwayConfig | ThresholdConfig
     announce: Reported = "both"
     role: Role = "count"
+    rule: Rule = "tracks"
+    coverage: CoverageConfig = field(default_factory=CoverageConfig)
 
     @property
     def doorway(self) -> DoorwayConfig | None:
@@ -170,6 +181,20 @@ class Config:
         return self.cameras[0]
 
 
+def _coverage(raw: dict) -> CoverageConfig:
+    """The pixel-change settings for a camera, defaults where it says nothing."""
+    given = raw.get("coverage", {})
+    return CoverageConfig(
+        slices=int(given.get("slices", 5)),
+        covered=float(given.get("covered", 0.25)),
+        difference=int(given.get("difference", 25)),
+        min_frames=int(given.get("min_frames", 2)),
+        min_slices=int(given.get("min_slices", 2)),
+        min_lag=float(given.get("min_lag", 0.25)),
+        stuck_after=int(given.get("stuck_after", 90)),
+    )
+
+
 def _point(raw: list[float]) -> Point:
     x, y = raw
     return float(x), float(y)
@@ -232,6 +257,8 @@ def _cameras(data: dict) -> list[CameraConfig]:
             detector=_detector(entry),
             announce=entry.get("announce", "both"),
             role=entry.get("role", "count"),
+            rule=entry.get("rule", "tracks"),
+            coverage=_coverage(entry),
         )
         for index, entry in enumerate(entries)
     ]

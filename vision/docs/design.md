@@ -151,6 +151,51 @@ in *every* frame, which is why plain presence is useless there.
 the command line. Tuning it against the live system is impractical: each attempt costs
 somebody a walk down the corridor, and a negative result says only "nothing happened".
 
+## Reading the box: pixel change per slice
+
+The drawn box is split into vertical slices, and each slice is watched for its pixels changing
+against a background learned only from frames where *that slice is uncovered*. Three outcomes,
+and the middle one is why the slices are worth it:
+
+| what the slices do | what it means |
+|---|---|
+| light in an order, with a person detected on the box | a passage, counted in the direction of the order |
+| light with no order | somebody on the doorframe who did not go through |
+| light with nobody detected | reported, never counted — the door, or a detector failure |
+
+**Why an order and not a measurement.** Three ways of reading direction from the box were tried
+against 1471 recorded frames, and the first two failed for the same reason — a person's outline
+swells as they approach the lens, so anything measuring *shape* follows the swelling instead of
+the travel:
+
+| method | result on three real passages |
+|---|---|
+| phase correlation over the box | direction **backwards** on the one it read |
+| centre of the covered region | 1 of 3 read; the close passage looked like standing still |
+| centre of the tracked person's box | same failure: centre moved 0.015 while they crossed the frame |
+| **order the slices light** | **3 of 3 read**, agreeing with the tracker where they overlap |
+
+An order is a sequence of events rather than a quantity, so the covering thing's changing size
+cannot corrupt it. It also works on the two-to-four frames a passage actually lasts at this
+frame rate, where fitting a trajectory does not.
+
+**Why pixels rather than detections for the passage.** Coverage grows as somebody comes closer;
+a person detector weakens, because a body filling the frame is out of distribution for one.
+Measured on lit footage the detector was in fact solid (median confidence 0.90 at ≥0.55 frame
+height, one single-frame dropout), so this is not a fix for a proven fault — it is the signal
+that degrades in the opposite direction to the other one, which is what makes the pair worth
+having. Neither is trusted alone: a passage needs the pixels *and* a detected person.
+
+**A trap worth knowing.** The background only learns from uncovered frames — that is what stops
+somebody standing in the doorway being absorbed into it. The cost is that a permanent change,
+such as a light switching on, covers every slice for ever, the background can never update, and
+the detector jams silently: no further passage is ever counted. Coverage outlasting any
+plausible passage (~20 s) is therefore adopted as the new view. Nobody walks through a doorway
+that slowly.
+
+`rule = "coverage"` selects this; `rule = "tracks"` keeps judging by the tracked person's own
+movement across the box, which is still right for a camera with no doorframe in view.
+
 ## One camera counts, the other names
 
 A camera at a doorway sees faces going one way and the backs of heads going the other, and

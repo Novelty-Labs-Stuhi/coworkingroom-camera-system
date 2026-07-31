@@ -19,6 +19,8 @@ from .handlers import Doorkeeper, Identifier
 from .latest import LatestFrames
 from .ledger import Ledger
 from .notify import TelegramNotifier
+from .occlusion import Occlusion
+from .passage import PassageMonitor
 from .pipeline import FrameObserver, Pipeline
 from .publishing import Publication, SightingPublisher
 from .recognition.body import BodyEmbedder
@@ -267,9 +269,17 @@ def _monitor(entry: CameraConfig, zones: ZoneStore):
     if drawn is not None:
         detector = replace(detector, zone=drawn.as_tuple())
 
-    def report(touch) -> None:
-        print(f"  -> {entry.name} {touch.readable}")
+    def report(observation) -> None:
+        print(f"  -> {entry.name} {observation.readable}")
 
+    if entry.rule == "coverage":
+        # Pixel change per vertical slice of the box decides the passage and its direction;
+        # the tracker only has to confirm a person was on it. See docs/design.md.
+        return PassageMonitor(
+            detector,
+            Occlusion(zone=detector.zone, config=entry.coverage),
+            watcher=report,
+        )
     return ThresholdMonitor(detector, report=report)
 
 

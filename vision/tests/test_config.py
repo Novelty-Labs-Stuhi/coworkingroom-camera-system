@@ -214,3 +214,45 @@ zone = [0.0, 0.0, 0.2, 1.0]
     )
     # A single-camera deployment must keep working: nobody would be counting otherwise.
     assert cfg.cameras[0].role == "count"
+
+
+def test_a_camera_can_be_told_to_read_the_box_by_pixel_change(tmp_path: Path) -> None:
+    """The coverage rule, and its own thresholds, come from the camera's own block."""
+    from stuhi_vision.assembly import _monitor
+    from stuhi_vision.passage import PassageMonitor
+    from stuhi_vision.threshold import ThresholdMonitor
+    from stuhi_vision.zones import ZoneStore
+
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "door-in"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.12, 1.0]
+edge = "left"
+passing_means = "in"
+rule = "coverage"
+
+[camera.coverage]
+slices = 6
+covered = 0.3
+
+[[camera]]
+name = "door-out"
+target = "http://two/stream"
+zone = [0.0, 0.0, 1.0, 1.0]
+discriminator = "approach"
+""",
+        )
+    )
+    pixels, tracks = cfg.cameras
+    assert (pixels.rule, tracks.rule) == ("coverage", "tracks")
+    assert (pixels.coverage.slices, pixels.coverage.covered) == (6, 0.3)
+    # Defaults elsewhere, so a camera that says nothing about pixels keeps the old rule.
+    assert tracks.coverage.slices == 5
+
+    zones = ZoneStore(tmp_path / "zones")
+    assert isinstance(_monitor(pixels, zones), PassageMonitor)
+    assert isinstance(_monitor(tracks, zones), ThresholdMonitor)
