@@ -86,6 +86,7 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
         frames=frames,
         zones=ZoneStore(tmp_path),
         witness=None,
+        passages=None,
     )
     image = np.zeros((4, 4, 3), dtype=np.uint8)
     camera = [Frame(timestamp=float(i), image=image) for i in range(3)]

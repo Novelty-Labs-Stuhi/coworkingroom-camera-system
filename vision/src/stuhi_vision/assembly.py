@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, replace
 
 from .alignment import DriftWatch
@@ -33,7 +34,7 @@ from .review import ReviewQueue
 from .sessions import SessionManager
 from .sources import open_source
 from .sources.buffered import BufferedSource
-from .store import EventStore
+from .store import EventStore, PassageStore
 from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
@@ -62,6 +63,10 @@ class _Shared:
     # Names the identifying camera has seen leaving, waiting for the counting camera to
     # attach one to an exit. Shared because it is a message from one camera to the other.
     witness: LeavingWitness
+    # Every episode of a doorframe being covered, refusals included. The events table holds
+    # only what was committed, so "why are there fewer exits than entries" had no evidence
+    # behind it: the log that held the refusals is rotated within hours.
+    passages: PassageStore
 
 
 @dataclass(slots=True)
@@ -92,6 +97,7 @@ class Application:
 
     cameras: list[Camera]
     store: EventStore
+    passages: PassageStore
     review: ReviewQueue
     ledger: Ledger
     frames: LatestFrames
@@ -121,6 +127,7 @@ class Application:
         if self.notifier is not None:
             self.notifier.stop()
         self.store.close()
+        self.passages.close()
 
 
 def build(config: Config, announce, observer: FrameObserver | None = None) -> Application:
@@ -155,6 +162,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
 
     frames = LatestFrames(encode_jpeg)
     zones = ZoneStore(config.paths.review_dir.parent / "zones")
+    passages = PassageStore(config.paths.database)
     shared = _Shared(
         gallery=gallery,
         ledger=ledger,
@@ -163,6 +171,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         frames=frames,
         zones=zones,
         witness=LeavingWitness(),
+        passages=passages,
     )
     cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     # The UI is started last: it serves frames and drift readings that only exist once the
@@ -187,6 +196,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     return Application(
         cameras=cameras,
         store=store,
+        passages=passages,
         review=review,
         ledger=ledger,
         frames=frames,
@@ -231,7 +241,7 @@ def _build_camera(
         clear_frames=performance.clip_clear_frames,
     )
 
-    monitor, attention = _monitor(entry, shared.zones)
+    monitor, attention = _monitor(entry, shared.zones, shared.passages)
     _follow_zone(entry, shared.zones, monitor, attention)
     pipeline = Pipeline(
         source=source,
@@ -317,7 +327,7 @@ def _motion(entry: CameraConfig, performance) -> float:
     return entry.motion_min_fraction
 
 
-def _monitor(entry: CameraConfig, zones: ZoneStore):
+def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | None = None):
     """The passage detector this camera configured, and the attention it needs, if any.
 
     A zone drawn in the UI wins over the one in the config: it was drawn by somebody looking
@@ -332,6 +342,10 @@ def _monitor(entry: CameraConfig, zones: ZoneStore):
 
     def report(observation) -> None:
         _log.info("%s %s", entry.name, observation.readable)
+        # Filed as well as logged: the log is rotated within hours, and a refused passage is
+        # exactly the evidence needed to explain a count that looks wrong.
+        if passages is not None and hasattr(observation, "coverage"):
+            passages.record(time.time(), entry.name, observation)
 
     if entry.rule == "coverage":
         # Pixel change per vertical slice of the box decides the passage and its direction;
