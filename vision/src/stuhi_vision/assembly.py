@@ -203,7 +203,10 @@ def _build_camera(
         max_clip_frames=performance.clip_max_frames,
     )
     source = _recorded(
-        BufferedSource(open_source(entry.source), performance.buffer_capacity), recorder
+        BufferedSource(
+            open_source(entry.source), performance.buffer_capacity, name=entry.name
+        ),
+        recorder,
     )
     publisher = SightingPublisher(
         recorder,

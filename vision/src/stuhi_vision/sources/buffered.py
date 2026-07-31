@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from collections.abc import Iterator
 
 from ..domain import Frame
@@ -43,13 +44,26 @@ class BufferedSource:
     seconds of backlog.
     """
 
-    def __init__(self, source: FrameSource, capacity: int = 64) -> None:
+    def __init__(self, source: FrameSource, capacity: int = 64, name: str = "") -> None:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         self._source = source
+        self._name = name
         self._queue: queue.Queue = queue.Queue(maxsize=capacity)
         self._stop = threading.Event()
         self._high_water = 0
+        # What the camera actually delivers, as opposed to what the models keep up with. The
+        # two are different numbers and the difference decides what is possible: a rule that
+        # needs several frames of a passage can only run on the reader's rate, not the
+        # pipeline's. Measuring it beats assuming it -- every estimate so far has been wrong.
+        self._read_frames = 0
+        self._read_since = 0.0
+        self._rate = 0.0
+
+    @property
+    def rate(self) -> float:
+        """Frames per second arriving from the camera, over the last stretch."""
+        return self._rate
 
     @property
     def high_water(self) -> int:
@@ -73,9 +87,25 @@ class BufferedSource:
             for frame in self._source:
                 if self._stop.is_set():
                     return
+                self._count()
                 self._offer(frame)
         finally:
             self._queue.put(_SENTINEL)
+
+    def _count(self) -> None:
+        """Measure the arrival rate, reporting it every hundred frames."""
+        now = time.monotonic()
+        if not self._read_since:
+            self._read_since = now
+        self._read_frames += 1
+        if self._read_frames < 100:
+            return
+        elapsed = now - self._read_since
+        if elapsed > 0:
+            self._rate = self._read_frames / elapsed
+            print(f"  -> {self._name or 'camera'} delivering {self._rate:.1f} fps")
+        self._read_frames = 0
+        self._read_since = now
 
     def _offer(self, frame: Frame) -> None:
         """Enqueue a frame, waiting if the consumer is behind. Never discards."""
