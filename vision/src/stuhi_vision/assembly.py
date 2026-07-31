@@ -263,7 +263,11 @@ def _monitor(entry: CameraConfig, zones: ZoneStore):
     detector = entry.detector
     if drawn is not None:
         detector = replace(detector, zone=drawn.as_tuple())
-    return ThresholdMonitor(detector)
+
+    def report(touch) -> None:
+        print(f"  -> {entry.name} {touch.readable}")
+
+    return ThresholdMonitor(detector, report=report)
 
 
 def _region_builder(entry: CameraConfig, padding: float):

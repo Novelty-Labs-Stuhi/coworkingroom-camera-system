@@ -311,3 +311,25 @@ def test_a_person_passing_close_to_the_lens_is_not_read_as_standing_still() -> N
         crossings += monitor.update([], _frame(100 + index))
 
     assert [crossing.direction for crossing in crossings] == [Direction.IN]
+
+
+def test_a_track_that_reaches_the_box_is_reported_either_way() -> None:
+    """A refused passage and one the tracker never saw look identical without this.
+
+    They need opposite fixes -- a threshold adjusted versus a camera or a light -- so the
+    difference has to be visible rather than inferred.
+    """
+    touches = []
+    monitor = ThresholdMonitor(
+        ThresholdConfig(
+            zone=(0.0, 0.0, 0.12, 1.0), edge="left", discriminator="travel", min_height=0.35
+        ),
+        report=touches.append,
+    )
+
+    _run(monitor, [0.40, 0.28, 0.16, 0.06])       # a passage
+    _run(monitor, [0.10, 0.12, 0.09, 0.11], track_id=2)   # stood in the doorway
+    _run(monitor, [0.80, 0.65, 0.50], track_id=3)         # never reached the box
+
+    assert [touch.direction for touch in touches] == [Direction.IN, None]
+    assert "travelled -0.34" in touches[0].readable

@@ -27,7 +27,7 @@ knocked camera degrades gradually instead of silently counting nothing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -81,6 +81,28 @@ class ThresholdConfig:
     lost_after: int = 6
 
 
+@dataclass(frozen=True, slots=True)
+class Touch:
+    """A track that reached the doorframe box, and what was made of it."""
+
+    frames: int
+    tallest: float
+    travelled: float   # along the axis of ``edge``; negative is towards left or top
+    grew: float        # change in height as a fraction of the frame
+    direction: Direction | None   # None: it reached the box but was not judged a passage
+
+    @property
+    def readable(self) -> str:
+        verdict = self.direction.value if self.direction else "no passage"
+        return (
+            f"touched the box over {self.frames} frames, "
+            f"travelled {self.travelled:+.2f}, grew {self.grew:+.2f} -> {verdict}"
+        )
+
+
+Report = Callable[[Touch], None]
+
+
 @dataclass
 class _Track:
     first: Box
@@ -99,10 +121,14 @@ class ThresholdMonitor:
     signal -- they left the frame at the door edge.
     """
 
-    def __init__(self, config: ThresholdConfig) -> None:
+    def __init__(self, config: ThresholdConfig, report: Report | None = None) -> None:
         self._config = config
         self._tracks: dict[int, _Track] = {}
         self._frame_index = 0
+        # Every track that touched the box is reported, counted or not. Without this a
+        # refused passage is indistinguishable from one the tracker never saw, and the two
+        # need entirely different fixes.
+        self._report = report
 
     def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
         """Feed one frame's tracked people; return crossings for tracks that just ended."""
@@ -160,10 +186,28 @@ class ThresholdMonitor:
         first = _relative(track.first, width, height)
         last = _relative(track.last, width, height)
         if self._config.discriminator == "approach":
-            return self._by_size(first, last)
-        if self._config.discriminator == "travel":
-            return self._by_travel(first, last)
-        return self._by_edge(first, last)
+            direction = self._by_size(first, last)
+        elif self._config.discriminator == "travel":
+            direction = self._by_travel(first, last)
+        else:
+            direction = self._by_edge(first, last)
+        self._tell(track, first, last, direction)
+        return direction
+
+    def _tell(self, track, first: _Relative, last: _Relative, direction) -> None:
+        """Say what a track that reached the box did, whether or not it counted."""
+        if self._report is None:
+            return
+        self._report(
+            Touch(
+                frames=track.frames,
+                tallest=track.tallest,
+                travelled=_leading(last, self._config.edge)
+                - _leading(first, self._config.edge),
+                grew=last.height - first.height,
+                direction=direction,
+            )
+        )
 
     def _by_edge(self, first: _Relative, last: _Relative) -> Direction | None:
         """Left past the edge, or arrived from it?"""
