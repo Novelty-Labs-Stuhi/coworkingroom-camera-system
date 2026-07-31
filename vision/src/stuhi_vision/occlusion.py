@@ -49,7 +49,13 @@ class CoverageConfig:
     # Frames of lag per slice before an order counts as a direction rather than noise. At a
     # few frames a second a person crosses a slice in well under a frame, so this is small.
     min_lag: float = 0.25
+    # How slowly the background follows the view: the reciprocal is the weight each new
+    # uncovered frame gets. A running average, not a median over stored frames -- the median
+    # cost a sort of millions of elements *per frame* and pinned the machine.
     background_frames: int = 60
+    # Width the box is compared at. Downscaling costs nothing and removes sensor noise; the
+    # slices are read as fractions of it, so it changes no threshold.
+    compare_width: int = 160
     # Coverage lasting longer than this is the view having changed, not somebody passing: a
     # light switched on, furniture moved, the door left open in a new position. Without it the
     # background can never be relearned -- it only learns from uncovered frames -- so one
@@ -97,8 +103,7 @@ class Occlusion:
     def __init__(self, zone: tuple[float, float, float, float], config: CoverageConfig) -> None:
         self._zone = zone
         self._config = config
-        self._recent: list = []
-        self._background = None
+        self._background = None   # float32, so the average does not quantise away
         self._episode: _Episode | None = None
         self._covered = 0.0
 
@@ -181,23 +186,23 @@ class Occlusion:
     def _compare(self, box):
         if self._background is None or self._background.shape != box.shape:
             return None
-        import cv2
 
-        return cv2.absdiff(box, self._background) > self._config.difference
+        import numpy as np
+
+        return np.abs(box - self._background) > self._config.difference
 
     def _adopt(self, box) -> None:
         """Start the background again from this frame: the view itself has changed."""
-        self._recent = []
+        self._background = box.copy()
         self._covered = 0.0
-        self._learn(box)
 
     def _learn(self, box) -> None:
-        import numpy as np
-
-        self._recent.append(box)
-        if len(self._recent) > self._config.background_frames:
-            self._recent.pop(0)
-        self._background = np.median(np.stack(self._recent), axis=0).astype(box.dtype)
+        """Let the background drift towards this frame. Only uncovered frames reach here."""
+        if self._background is None:
+            self._background = box.copy()
+            return
+        weight = 1.0 / max(self._config.background_frames, 1)
+        self._background += weight * (box - self._background)
 
     def _prepare(self, image):
         import cv2
@@ -209,7 +214,11 @@ class Occlusion:
             int(x1 * width) : max(int(x2 * width), int(x1 * width) + 1),
         ]
         grey = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
-        return cv2.GaussianBlur(grey, (5, 5), 0)
+        wide = self._config.compare_width
+        if grey.shape[1] > wide:
+            scale = wide / grey.shape[1]
+            grey = cv2.resize(grey, (wide, max(1, int(grey.shape[0] * scale))))
+        return cv2.GaussianBlur(grey, (5, 5), 0).astype("float32")
 
 
 def _by_slice(changed, slices: int) -> list[float]:
