@@ -130,7 +130,8 @@ def test_the_person_longest_on_the_box_is_the_one_credited() -> None:
 def test_the_pixels_and_the_tracker_together_over_synthetic_frames() -> None:
     """End to end with the real Occlusion: a dark shape sweeping across a lit doorframe."""
     # The real thing: Attention runs the pixels once a frame and hands the episode over.
-    attention = Attention(Occlusion(zone=(0.0, 0.0, 0.5, 1.0), config=_settings()), pre_roll_seconds=2.0)
+    doorframe = Occlusion(zone=(0.0, 0.0, 0.5, 1.0), config=_settings())
+    attention = Attention(doorframe, pre_roll_seconds=2.0)
     monitor = PassageMonitor(
         ThresholdConfig(
             zone=(0.0, 0.0, 0.5, 1.0), edge="left", passing_means=Direction.IN, min_height=0.35
