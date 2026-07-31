@@ -82,6 +82,12 @@ class CameraConfig:
     # zero, or the gate suppresses the frames that hold a person, while a lit room can skip
     # most of the day. None means "whatever [performance] says".
     motion_min_fraction: float | None = None
+    # Frames a track must have been seen for before its crossing counts. Per camera because
+    # what the gate is *for* differs by rule: with "tracks" it is the only thing rejecting
+    # single-frame flicker, while with "coverage" the pixels have already established a
+    # passage over several frames and this only adds a second, redundant hurdle -- one that
+    # measured live rejected real walks, because a dark corridor fragments track ids.
+    min_track_age: int | None = None
 
     @property
     def doorway(self) -> DoorwayConfig | None:
@@ -265,6 +271,7 @@ def _cameras(data: dict) -> list[CameraConfig]:
             rule=entry.get("rule", "tracks"),
             coverage=_coverage(entry),
             motion_min_fraction=entry.get("motion_min_fraction"),
+            min_track_age=entry.get("min_track_age"),
         )
         for index, entry in enumerate(entries)
     ]

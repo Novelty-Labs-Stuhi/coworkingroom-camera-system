@@ -198,7 +198,7 @@ def _build_camera(
         thresholds.face_margin,
         face_workers=performance.face_workers,
     )
-    committer = _committer(entry, sessions, shared, thresholds.min_track_age)
+    committer = _committer(entry, sessions, shared, _persistence(entry, thresholds))
     drift = DriftWatch(shared.zones.reference_path(entry.name))
 
     # Tapped at the source, so the clip covers the *approach* to a crossing, not just the
@@ -262,6 +262,13 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
     return Doorkeeper(
         sessions, shared.ledger, min_age, camera=entry.name, witness=shared.witness
     )
+
+
+def _persistence(entry: CameraConfig, thresholds) -> int:
+    """Frames a track must have been seen for before its crossing counts, for this camera."""
+    if entry.min_track_age is None:
+        return thresholds.min_track_age
+    return entry.min_track_age
 
 
 def _motion(entry: CameraConfig, performance) -> float:

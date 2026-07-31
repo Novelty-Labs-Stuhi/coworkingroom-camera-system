@@ -292,3 +292,37 @@ motion_min_fraction = 0.004
     # the frames holding a person in the dark, which is a silent loss of every passage.
     assert _motion(corridor, cfg.performance) == 0.0
     assert _motion(room, cfg.performance) == 0.004
+
+
+def test_a_camera_can_set_its_own_persistence_gate(tmp_path: Path) -> None:
+    """With the coverage rule the pixels already prove the passage; the gate is redundant.
+
+    Measured live, it was worse than redundant: two real walks out were read correctly and
+    thrown away as "seen 1 frames", because a dark corridor fragments track ids.
+    """
+    from stuhi_vision.assembly import _persistence
+
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "door-in"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.12, 1.0]
+rule = "coverage"
+min_track_age = 1
+
+[[camera]]
+name = "door-out"
+target = "http://two/stream"
+zone = [0.0, 0.0, 1.0, 1.0]
+
+[thresholds]
+min_track_age = 2
+""",
+        )
+    )
+    pixels, tracks = cfg.cameras
+    assert _persistence(pixels, cfg.thresholds) == 1
+    assert _persistence(tracks, cfg.thresholds) == 2
