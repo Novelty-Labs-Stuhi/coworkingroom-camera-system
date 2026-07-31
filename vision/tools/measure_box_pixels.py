@@ -25,20 +25,20 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--dir", required=True)
     parser.add_argument("--rotate", action="store_true", help="camera hangs upside down")
     parser.add_argument("--zone", nargs=4, type=float, default=[0.0, 0.0, 0.30, 1.0])
+    parser.add_argument("--slices", type=int, default=5)
     parser.add_argument("--covered", type=float, default=0.25)
     parser.add_argument("--difference", type=int, default=25)
     parser.add_argument("--min-frames", type=int, default=2)
-    parser.add_argument("--travel-margin", type=float, default=0.04)
+    parser.add_argument("--min-lag", type=float, default=0.25)
     parser.add_argument("--limit", type=int, default=0)
     return parser.parse_args()
 
 
-def _reading(travelled: float, margin: float) -> str:
-    if travelled <= -margin:
-        return "leftwards"
-    if travelled >= margin:
-        return "rightwards"
-    return "no clear direction"
+def _reading(episode) -> str:
+    """Which way the slices lit up, if they lit in an order at all."""
+    if not episode.swept:
+        return "no order -- stood on the doorframe"
+    return "leftwards" if episode.lag < 0 else "rightwards"
 
 
 def main() -> None:
@@ -50,7 +50,11 @@ def main() -> None:
     occlusion = Occlusion(
         zone=(args.zone[0], args.zone[1], args.zone[2], args.zone[3]),
         config=CoverageConfig(
-            covered=args.covered, difference=args.difference, min_frames=args.min_frames
+            slices=args.slices,
+            covered=args.covered,
+            difference=args.difference,
+            min_frames=args.min_frames,
+            min_lag=args.min_lag,
         ),
     )
 
@@ -58,7 +62,7 @@ def main() -> None:
     if args.limit:
         paths = paths[: args.limit]
 
-    print("  frame                  frames  peak cover   travel  reading")
+    print("  frame                  frames  slices  peak      lag  reading")
     episodes = 0
     for path in paths:
         image = cv2.imread(str(path))
@@ -71,8 +75,8 @@ def main() -> None:
             continue
         episodes += 1
         print(
-            f"  {path.name:<22} {episode.frames:>5}  {episode.peak:>10.2f}  "
-            f"{episode.travelled:>+7.2f}  {_reading(episode.travelled, args.travel_margin)}"
+            f"  {path.name:<22} {episode.frames:>5}  {episode.slices:>6}  "
+            f"{episode.peak:>4.2f}  {episode.lag:>+7.2f}  {_reading(episode)}"
         )
 
     print(f"\nframes: {len(paths)}   episodes over the box: {episodes}")

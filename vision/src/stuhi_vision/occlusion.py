@@ -1,76 +1,85 @@
-"""Something is covering the doorframe: pixels, in vertical slices.
+"""Something is covering the doorframe, and in what order: pixels, not detections.
 
-The doorframe box is a piece of the picture whose appearance is known when nobody is in it. A
-person standing in the doorway covers it, and the fraction of it that no longer matches
-measures that directly -- with a property no detector has: **it gets stronger the closer
-somebody is**, where a person detector gets weaker, a body filling the frame being out of
-distribution for one.
+The box is split into vertical slices, and each slice is watched for its pixels changing. Two
+things fall out of that, which is why it is worth doing rather than watching the box as a
+whole:
 
-The box is split into vertical slices, and each is measured separately. That gives the
-direction for free: somebody crossing covers the slices **in order**, and the order is which
-way they went. It is also coarse on purpose -- a slice is many pixels wide, so noise in a few
-of them cannot move the reading, where a per-column measure can.
+* **Movement**: any slice changing means something is on the doorframe. This is the one signal
+  that gets *stronger* as somebody comes closer, where a person detector gets weaker -- a body
+  filling the frame is out of distribution for one.
+* **Direction**: the *order* the slices light up. Somebody walking through covers the near
+  slice first and the far slice last, or the reverse, and which it is says in or out. An order
+  is a sequence of events rather than a measurement of shape, so it survives the thing that
+  defeated every earlier attempt: a person's outline swelling as they approach the lens, which
+  made both a correlation and a centre-of-mass read backwards.
+* **Neither**: slices that light without an order -- the same ones covered throughout -- is
+  somebody standing in the doorway rather than passing through it. That case is now
+  distinguishable instead of being a guess.
 
 What pixels cannot say is what the covering thing *is*. A swinging door, an arm reaching
-through, a bag set down in the doorway and a person all read alike. So this module answers only
-"is the box covered, in which slices, and in what order", and the tracker establishes that a
-person was there -- see :mod:`.passage`.
+through and a person read alike, so the tracker is what establishes a person was there --
+see :mod:`.passage`.
 
-Two things keep it honest:
-
-* **The background is learned only from uncovered frames**, so a person standing in the
-  doorway can never be absorbed into it, while a door left open or a light switched on is.
-* **Direction comes from the order the slices light**, not from correlating the box between
-  frames. Measured on real passages, correlation reads backwards when the covering is also
-  growing: somebody passing close to the lens swells across the box, and correlation follows
-  the swelling rather than the travel.
-
-Whether there are enough frames for an order to exist at all is a property of the camera, not
-of this code: use ``tools/measure_box_slices.py`` on recorded frames to see the timeline.
+The background each slice is compared against is learned only from frames where that slice is
+uncovered, so somebody standing in the doorway is never absorbed into it, while a door left
+open or a light switched on is.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-_SLICES = 4  # across the box; enough for an order, wide enough to ignore pixel noise
-_BACKGROUND_FRAMES = 60
+_SLICES = 5  # enough to give an order across a doorframe; few enough that each stays reliable
 
 
 @dataclass(frozen=True, slots=True)
 class CoverageConfig:
-    """How much change counts as covered, and for how long."""
+    """How much change counts as covered, and what counts as a sweep across the box."""
 
-    # Fraction of a slice that must differ from the background for that slice to count as
-    # covered. Measured passages covered 0.38-0.56 of the whole box at their peak.
-    covered: float = 0.25
-    difference: int = 25  # grey levels of difference, per pixel
     slices: int = _SLICES
-    min_frames: int = 2  # frames of coverage before it is an episode rather than a flicker
-    background_frames: int = _BACKGROUND_FRAMES
+    # Fraction of a slice that must differ from its background for that slice to be covered.
+    covered: float = 0.25
+    # Grey levels of difference that count as changed, per pixel.
+    difference: int = 25
+    # Frames of coverage before it is an episode rather than a flicker.
+    min_frames: int = 2
+    # Slices that must be covered at some point for a passage to be possible. Two is the
+    # minimum that can carry an order; more would refuse somebody who clipped the doorframe.
+    min_slices: int = 2
+    # Frames of lag per slice before an order counts as a direction rather than noise. At a
+    # few frames a second a person crosses a slice in well under a frame, so this is small.
+    min_lag: float = 0.25
+    background_frames: int = 60
+    # Coverage lasting longer than this is the view having changed, not somebody passing: a
+    # light switched on, furniture moved, the door left open in a new position. Without it the
+    # background can never be relearned -- it only learns from uncovered frames -- so one
+    # lighting change would jam the detector permanently, reporting coverage for ever and
+    # never counting another passage. Twenty seconds or so at this frame rate; nobody walks
+    # through a doorway that slowly.
+    stuck_after: int = 90
 
 
 @dataclass(frozen=True, slots=True)
 class Coverage:
-    """One finished episode of the box being covered, and how it moved across the slices."""
+    """One finished episode of the box being covered."""
 
     frames: int
     peak: float
-    travelled: float          # slices crossed, signed; negative is towards slice zero
-    timeline: tuple[tuple[float, ...], ...]   # per frame, coverage of each slice
+    slices: int          # how many slices were covered at some point
+    lag: float           # frames of delay per slice: negative means the far side lit first
+    order: tuple[float, ...]   # when each slice first lit, in frames from the episode's start
+
+    @property
+    def swept(self) -> bool:
+        """Whether the covering crossed the box rather than sitting in it."""
+        return self.lag != 0.0
 
     @property
     def readable(self) -> str:
+        way = "no order" if not self.swept else f"lag {self.lag:+.2f} frames per slice"
         return (
-            f"box covered for {self.frames} frames, peak {self.peak:.2f}, "
-            f"moved {self.travelled:+.1f} slices"
-        )
-
-    @property
-    def picture(self) -> str:
-        """The timeline as one line per frame, for reading in a log or a terminal."""
-        return "\n".join(
-            "    " + " ".join(f"{value:.2f}" for value in row) for row in self.timeline
+            f"box covered for {self.frames} frames, {self.slices} slices, "
+            f"peak {self.peak:.2f}, {way}"
         )
 
 
@@ -78,12 +87,12 @@ class Coverage:
 class _Episode:
     frames: int = 0
     peak: float = 0.0
-    rows: list[tuple[float, ...]] = field(default_factory=list)
-    middles: list[float] = field(default_factory=list)
+    # The frame within the episode each slice was first covered on.
+    first_seen: dict[int, int] = field(default_factory=dict)
 
 
 class Occlusion:
-    """Watches one box, in vertical slices, for something covering it."""
+    """Watches one box, sliced vertically, for something covering it."""
 
     def __init__(self, zone: tuple[float, float, float, float], config: CoverageConfig) -> None:
         self._zone = zone
@@ -91,12 +100,12 @@ class Occlusion:
         self._recent: list = []
         self._background = None
         self._episode: _Episode | None = None
-        self._slices: tuple[float, ...] = ()
+        self._covered = 0.0
 
     @property
-    def slices(self) -> tuple[float, ...]:
-        """The most recent per-slice coverage, for reporting."""
-        return self._slices
+    def covered(self) -> float:
+        """The most recent reading: the fraction of the whole box that changed."""
+        return self._covered
 
     @property
     def busy(self) -> bool:
@@ -105,37 +114,38 @@ class Occlusion:
     def update(self, image) -> Coverage | None:
         """Feed one frame. Returns an episode only on the frame its coverage ends."""
         box = self._prepare(image)
-        self._slices = self._measure(box)
-        covered = max(self._slices) if self._slices else 0.0
-
-        if covered >= self._config.covered:
-            self._extend()
+        changed = self._compare(box)
+        if changed is None:
+            self._covered = 0.0
+            self._learn(box)
             return None
+
+        per_slice = _by_slice(changed, self._config.slices)
+        self._covered = float(changed.mean())
+        threshold = self._config.covered
+        lit = [index for index, fraction in enumerate(per_slice) if fraction >= threshold]
+
+        if lit:
+            return self._extend(lit, max(per_slice), box)
         return self._finish(box)
 
-    def _measure(self, box) -> tuple[float, ...]:
-        """The changed fraction of each vertical slice of the box."""
-        if self._background is None or self._background.shape != box.shape:
-            return ()
-        import cv2
-        import numpy as np
-
-        changed = cv2.absdiff(box, self._background) > self._config.difference
-        columns = np.array_split(changed, self._config.slices, axis=1)
-        return tuple(float(part.mean()) for part in columns)
-
-    def _extend(self) -> None:
+    def _extend(self, lit: list[int], peak: float, box) -> Coverage | None:
         if self._episode is None:
             self._episode = _Episode()
-        self._episode.frames += 1
-        self._episode.peak = max(self._episode.peak, *self._slices)
-        self._episode.rows.append(self._slices)
-        middle = _middle(self._slices)
-        if middle is not None:
-            self._episode.middles.append(middle)
+        episode = self._episode
+        for index in lit:
+            episode.first_seen.setdefault(index, episode.frames)
+        episode.frames += 1
+        episode.peak = max(episode.peak, peak)
+
+        if episode.frames >= self._config.stuck_after:
+            # Whatever this is, it is the view now. Adopt it and forget the episode: reporting
+            # a passage from it would be false, and waiting for it to clear could be for ever.
+            self._episode = None
+            self._adopt(box)
+        return None
 
     def _finish(self, box) -> Coverage | None:
-        """Coverage has ended: learn from this frame, and report the episode if it was one."""
         episode, self._episode = self._episode, None
         self._learn(box)
         if episode is None or episode.frames < self._config.min_frames:
@@ -143,9 +153,43 @@ class Occlusion:
         return Coverage(
             frames=episode.frames,
             peak=episode.peak,
-            travelled=_travelled(episode.middles),
-            timeline=tuple(episode.rows),
+            slices=len(episode.first_seen),
+            lag=self._lag(episode.first_seen),
+            order=tuple(
+                float(episode.first_seen.get(index, -1)) for index in range(self._config.slices)
+            ),
         )
+
+    def _lag(self, first_seen: dict[int, int]) -> float:
+        """Frames of delay per slice across the box: the slope of when each slice lit.
+
+        Positive means the low-numbered (left) slices lit first, so the covering travelled
+        rightwards. Zero means no order worth reading -- somebody standing in the doorway, or a
+        single slice covered, or every slice lighting in the same frame.
+        """
+        if len(first_seen) < self._config.min_slices:
+            return 0.0
+        import numpy as np
+
+        indices = np.array(sorted(first_seen), dtype=float)
+        times = np.array([first_seen[int(index)] for index in indices], dtype=float)
+        if times.max() == times.min():
+            return 0.0
+        slope = float(np.polyfit(indices, times, 1)[0])
+        return slope if abs(slope) >= self._config.min_lag else 0.0
+
+    def _compare(self, box):
+        if self._background is None or self._background.shape != box.shape:
+            return None
+        import cv2
+
+        return cv2.absdiff(box, self._background) > self._config.difference
+
+    def _adopt(self, box) -> None:
+        """Start the background again from this frame: the view itself has changed."""
+        self._recent = []
+        self._covered = 0.0
+        self._learn(box)
 
     def _learn(self, box) -> None:
         import numpy as np
@@ -168,24 +212,15 @@ class Occlusion:
         return cv2.GaussianBlur(grey, (5, 5), 0)
 
 
-def _middle(slices: tuple[float, ...]) -> float | None:
-    """Where the covering sits across the slices, weighted by how covered each one is."""
-    total = sum(slices)
-    if total <= 0:
-        return None
-    return sum(index * value for index, value in enumerate(slices)) / total
+def _by_slice(changed, slices: int) -> list[float]:
+    """The fraction of each vertical slice that changed."""
+    from itertools import pairwise
 
-
-def _travelled(middles: list[float]) -> float:
-    """How many slices the covering crossed, from a line fitted through every frame.
-
-    Every frame rather than first-versus-last: an episode can be two or three frames, and the
-    endpoints alone are dominated by whatever shape the covering happened to have in those two.
-    """
-    if len(middles) < 2:
-        return 0.0
     import numpy as np
 
-    frames = np.arange(len(middles), dtype=float)
-    slope = float(np.polyfit(frames, np.array(middles, dtype=float), 1)[0])
-    return slope * (len(middles) - 1)
+    columns = changed.shape[1]
+    edges = np.linspace(0, columns, slices + 1).astype(int)
+    return [
+        float(changed[:, start:stop].mean()) if stop > start else 0.0
+        for start, stop in pairwise(edges)
+    ]
