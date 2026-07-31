@@ -40,7 +40,7 @@ def test_pending_sightings_are_listed(setup) -> None:
     client, _review, _gallery, sighting_id = setup
     body = client.get("/api/sightings").json()
 
-    assert [r["id"] for r in body["pending"]] == [sighting_id]
+    assert [r["id"] for r in body["unchecked_unknown"]] == [sighting_id]
     assert body["people"] == {}
 
 
@@ -54,8 +54,10 @@ def test_labelling_enrols_and_moves_it_to_labelled(setup) -> None:
     assert gallery.counts() == {"ilari": 1}
 
     body = client.get("/api/sightings").json()
-    assert body["pending"] == []
-    assert [r["labelled_as"] for r in body["labelled"]] == ["ilari"]
+    # Saved, so it leaves the unchecked piles for the checked one.
+    assert body["unchecked_unknown"] == []
+    assert body["unchecked_named"] == []
+    assert [r["labelled_as"] for r in body["checked"]] == ["ilari"]
 
 
 def test_labelling_twice_counts_once(setup) -> None:
@@ -233,7 +235,7 @@ def test_a_group_carries_its_faces_in_crossing_order(tmp_path) -> None:
 
     third, first, second = crossed(3), crossed(1), crossed(2)   # recorded out of order
 
-    pending = TestClient(create_app(review)).get("/api/sightings").json()["pending"]
+    pending = TestClient(create_app(review)).get("/api/sightings").json()["unchecked_unknown"]
     by_id = {entry["id"]: entry for entry in pending}
 
     assert by_id[first]["group_ids"] == [first, second, third]
@@ -264,6 +266,6 @@ def test_a_lone_crossing_carries_no_group(tmp_path) -> None:
         burst=3,
     )
 
-    entry = TestClient(create_app(review)).get("/api/sightings").json()["pending"][0]
+    entry = TestClient(create_app(review)).get("/api/sightings").json()["unchecked_unknown"][0]
     assert entry["group_ids"] == []
     assert entry["group_size"] == 1

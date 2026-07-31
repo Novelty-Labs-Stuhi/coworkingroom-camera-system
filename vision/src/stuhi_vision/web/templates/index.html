@@ -33,40 +33,74 @@
     <p class="hint" id="showing" role="status" hidden></p>
   </section>
 
-  <section>
-    <h2>Waiting for your check <span class="count" id="pending-count"></span></h2>
+  <p class="hint" id="sorting">
+    Order:
+    <button type="button" class="sort chosen" data-sort="latest">newest first</button>
+    <button type="button" class="sort" data-sort="odd">least like that person first</button>
+  </p>
+
+  <section class="pile" data-pile="unchecked_unknown">
+    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
+      Nobody recognised &mdash; needs a name <span class="count"></span></h2>
     <p class="hint">
-      The name in the box is the system's own answer. Confirm it, or correct it first and
-      then save &mdash; nothing is enrolled until you save.
+      The system labelled these <b>unknown</b>: it saw a person and matched nobody. Type who
+      it is, or save them as <b>unknown</b> if they are not somebody you want to track.
     </p>
-    <div id="pending" class="grid"></div>
-    <p class="empty" id="pending-empty">Nothing waiting. Walk through the doorway.</p>
+    <div class="grid"></div>
+    <p class="empty">Nothing waiting.</p>
   </section>
 
-  <section>
-    <h2>Worth rechecking <span class="count" id="recheck-count"></span></h2>
+  <section class="pile" data-pile="unchecked_named">
+    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
+      Guessed &mdash; needs your check <span class="count"></span></h2>
     <p class="hint">
-      Labels that might be wrong: a face sitting far from the rest of that person's, or a
-      name used only once &mdash; which is what a typo looks like. Saving one settles it for
-      good; it will not come back here.
+      The system put a name to these. Confirm it, or correct it first and then save.
     </p>
-    <div id="recheck" class="grid"></div>
-    <p class="empty" id="recheck-empty">Nothing to recheck.</p>
+    <div class="grid"></div>
+    <p class="empty">Nothing waiting.</p>
+  </section>
 
-    <h3>Needs more examples</h3>
+  <section class="pile" data-pile="recheck">
+    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
+      Worth rechecking <span class="count"></span></h2>
+    <p class="hint">
+      Saved, but the numbers look odd: a face far from the rest of that person's, or a name
+      used only once &mdash; which is what a typo looks like. Saving again settles it.
+    </p>
+    <div class="grid"></div>
+    <p class="empty">Nothing to recheck.</p>
+  </section>
+
+  <section class="pile" data-pile="checked_unknown">
+    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
+      Checked, and unknown <span class="count"></span></h2>
+    <p class="hint">
+      You looked at these and left them as <b>unknown</b> &mdash; a visitor, or nobody worth
+      naming. Kept apart so they do not clutter the people you do track.
+    </p>
+    <div class="grid"></div>
+    <p class="empty">None.</p>
+  </section>
+
+  <section class="pile" data-pile="checked">
+    <h2><button type="button" class="fold" aria-expanded="false">&#9656;</button>
+      Everything you have checked <span class="count"></span></h2>
+    <p class="hint">
+      All of it, including the two piles above &mdash; for finding a past sighting rather than
+      working through. Give a different name to correct one.
+    </p>
+    <div class="grid"></div>
+    <p class="empty">None yet.</p>
+  </section>
+
+  <section id="thin-panel">
+    <h2>Needs more examples</h2>
     <p class="hint">
       One or two faces is not enough to recognise someone reliably &mdash; and with two, an
       odd one out cannot be detected at all. Label a few more clips of these people.
     </p>
     <ul id="thin" class="people"></ul>
     <p class="empty" id="thin-empty">Everyone has enough.</p>
-  </section>
-
-  <section>
-    <h2>Already labelled <span class="count" id="labelled-count"></span></h2>
-    <p class="hint">Give a different name to correct one. The wrong reference is removed.</p>
-    <div id="labelled" class="grid"></div>
-    <p class="empty" id="labelled-empty">None yet.</p>
   </section>
 
   <template id="card-template">
@@ -101,6 +135,14 @@
         <button type="button" class="reject" title="Unusable clip: remove from the gallery">
           Reject
         </button>
+      </form>
+      <!-- Why it was rejected, in your words. It stays with the record, so somebody working
+           on the detector can read what it is actually getting wrong. -->
+      <form class="rejecting" hidden>
+        <input class="note" type="text" placeholder="why? e.g. back of a head, the door"
+               autocomplete="off">
+        <button type="submit">Reject</button>
+        <button type="button" class="cancel reject">Cancel</button>
       </form>
       <p class="result" role="status"></p>
     </article>

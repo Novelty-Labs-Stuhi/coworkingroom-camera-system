@@ -320,3 +320,42 @@ def test_recent_names_are_offered_most_recently_used_first(tmp_path) -> None:
 
     # "art" was used again after "ilari", so it leads; each name appears once.
     assert review.recent_names() == ["yehor", "art", "ilari"]
+
+
+def test_every_sighting_lands_in_a_pile(tmp_path) -> None:
+    """The system labels everything it sees, so nothing may fall between the piles."""
+    review, _ = _queue(tmp_path)
+    unknown = review.record(_sighting())
+    guessed = review.record(
+        _sighting(timestamp=1_760_000_100.0, name="art", outcome=Outcome.NAMED)
+    )
+    done = review.record(_sighting(timestamp=1_760_000_200.0))
+    review.label(done, "ilari")
+
+    piles = review.piles()
+
+    assert [r.sighting_id for r in piles["unchecked_unknown"]] == [unknown]
+    assert [r.sighting_id for r in piles["unchecked_named"]] == [guessed]
+    assert [r.sighting_id for r in piles["checked"]] == [done]
+
+
+def test_somebody_saved_as_unknown_sits_with_the_unknowns(tmp_path) -> None:
+    """A person saying "unknown" is a decision, and it needs a different action from a name."""
+    review, _ = _queue(tmp_path)
+    said_unknown = review.record(_sighting())
+    review.label(said_unknown, "unknown")
+
+    piles = review.piles()
+    assert [r.sighting_id for r in piles["checked_unknown"]] == [said_unknown]
+    assert [r.sighting_id for r in piles["checked"]] == [said_unknown]
+
+
+def test_rejecting_keeps_the_reason_where_it_can_be_read(tmp_path) -> None:
+    review, _ = _queue(tmp_path)
+    bad = review.record(_sighting())
+
+    review.dismiss(bad, "that is the door swinging, not a person")
+
+    assert review.get(bad).rejected_because == "that is the door swinging, not a person"
+    # Rejected is a decision too, so it leaves the queue rather than being offered again.
+    assert [r.sighting_id for r in review.piles()["unchecked_unknown"]] == []

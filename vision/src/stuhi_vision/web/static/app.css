@@ -65,6 +65,48 @@ section { margin-bottom: 2.5rem; }
 .people .fix:hover { border-color: var(--accent); color: var(--text); filter: none; }
 .people span { color: var(--muted); }
 
+/* A pile put away keeps its heading and nothing else, so five piles still fit on a screen
+   and the one being worked through is not pushed off it. */
+.pile.folded .grid,
+.pile.folded .hint,
+.pile.folded .empty { display: none; }
+.fold {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 .35rem 0 0;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.fold:hover { color: var(--text); filter: none; }
+
+/* Which order the piles are in. Two states, so the current one has to look chosen. */
+#sorting { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.sort {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+  font-size: .8rem;
+  padding: .15rem .5rem;
+}
+.sort:hover { color: var(--text); border-color: var(--accent); filter: none; }
+.sort.chosen { color: var(--accent); border-color: var(--accent); }
+
+/* Asking why before rejecting: the reason is worth more than the click is expensive. */
+.rejecting { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+.rejecting .note {
+  flex: 1 1 10rem;
+  min-width: 7rem;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .9rem;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -80,6 +80,11 @@ class ReviewRecord:
     # Marked unusable by a human -- back of a head, motion blur, nobody really there. Kept
     # rather than deleted so it stops being offered without losing the evidence.
     dismissed: bool = False
+    # Why a clip was rejected, in the rejecter's own words. Kept with the record rather than
+    # in a log: "back of a head", "that is the door, not a person", "two people, one box" are
+    # what tell somebody working on the detector what it is actually getting wrong, and a log
+    # is rotated within hours.
+    rejected_because: str = ""
     # A person has looked at this and saved it. It never returns to "worth rechecking":
     # whatever the audit thinks of the numbers, somebody has judged it, and offering it back
     # would be arguing with them for ever.
@@ -303,7 +308,7 @@ class ReviewQueue:
             for burst, found in members.items()
         }
 
-    def dismiss(self, sighting_id: str) -> LabelOutcome:
+    def dismiss(self, sighting_id: str, note: str = "") -> LabelOutcome:
         """Mark a sighting unusable, removing any reference it contributed.
 
         A back-of-head or blurred capture should stop being offered *and* stop influencing
@@ -320,7 +325,13 @@ class ReviewQueue:
                     self._gallery.discard(record.labelled_as, np.load(path))
                     self._gallery.save(self._gallery_dir)
             self._records[sighting_id] = ReviewRecord(
-                **{**asdict(record), "labelled_as": None, "dismissed": True}
+                **{
+                    **asdict(record),
+                    "labelled_as": None,
+                    "dismissed": True,
+                    "rejected_because": note.strip(),
+                    "checked": True,
+                }
             )
             self._flush()
             return LabelOutcome.DISMISSED
@@ -413,6 +424,50 @@ class ReviewQueue:
                 )
         return found
 
+    def piles(self, sort: str = "latest", limit: int = 50) -> dict[str, list[ReviewRecord]]:
+        """Every sighting, in the pile that describes what has happened to it.
+
+        The system labels *everything* it sees, using "unknown" when it recognises nobody, so
+        each sighting belongs somewhere from the moment it is recorded. The unknowns are kept
+        apart from the named ones in both halves: they need a different action -- a name typed
+        rather than a guess confirmed -- and mixing them makes a queue that cannot be worked
+        through steadily.
+
+        ``checked`` is deliberately a superset of ``recheck`` and ``checked_unknown``: it is
+        everything already dealt with, which is the pile to search when looking for a past
+        sighting rather than one to work through.
+        """
+        far = self._distances()
+        with self._lock:
+            records = list(self._records.values())
+
+        def order(found: list[ReviewRecord]) -> list[ReviewRecord]:
+            if sort == "odd":
+                # Furthest from that person's average first: the likeliest mistakes, rather
+                # than the newest. A sighting with no reference has no distance, so it sorts
+                # last -- there is nothing to be suspicious of.
+                found.sort(key=lambda r: far.get(r.sighting_id, 1.0))
+            else:
+                found.sort(key=lambda r: r.timestamp, reverse=True)
+            return found[:limit]
+
+        rechecking = {record.sighting_id for record, _ in self.worth_rechecking(limit=limit)}
+        unchecked = [r for r in records if not r.checked and not r.dismissed]
+        checked = [r for r in records if r.checked]
+        return {
+            "unchecked_unknown": order([r for r in unchecked if _is_unknown(r)]),
+            "unchecked_named": order([r for r in unchecked if not _is_unknown(r)]),
+            "recheck": order([r for r in checked if r.sighting_id in rechecking]),
+            "checked_unknown": order([r for r in checked if _is_unknown(r)]),
+            "checked": order(list(checked)),
+        }
+
+    def _distances(self) -> dict[str, float]:
+        """How much each enrolled face is unlike the rest of that person's, by sighting id."""
+        return {
+            suspect.sighting_id: suspect.similarity for suspect in self.audit().suspects
+        }
+
     def recent_names(self, limit: int = 20) -> list[str]:
         """Names in the order they were last used, most recent first.
 
@@ -486,3 +541,14 @@ class ReviewQueue:
     def _flush(self) -> None:
         payload = [asdict(record) for record in self._records.values()]
         (self._dir / _INDEX).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _is_unknown(record: ReviewRecord) -> bool:
+    """Whether this sighting stands as "unknown" -- nobody named it, or somebody said so.
+
+    Both halves matter. The system labels everything, using "unknown" when it recognises
+    nobody, and a person may deliberately save "unknown" for somebody who is not staff. The
+    two look the same here on purpose: what they share is that no name is attached, which is
+    what decides which pile it belongs in.
+    """
+    return (record.labelled_as or record.name or "unknown").lower() == "unknown"

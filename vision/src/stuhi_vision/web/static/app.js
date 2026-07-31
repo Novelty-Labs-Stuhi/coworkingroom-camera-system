@@ -6,23 +6,23 @@ const MESSAGES = {
   unlabelled: ['same', 'Label removed — back in the queue.'],
 };
 
+// Newest first, or furthest from that person's average face first -- which puts the likeliest
+// mistakes at the top instead of the most recent.
+let sortBy = 'latest';
+
 async function loadSightings() {
-  const response = await fetch('/api/sightings');
+  const response = await fetch(`/api/sightings?sort=${sortBy}`);
   if (!response.ok) return;
   const data = await response.json();
   renderPeople(data.people);
   renderNames(Object.keys(data.people));
   // Most recently used first: the answer is usually one of the last few people through.
   recentNames = data.recent_names || [];
-  for (const [section, records] of [
-    ['pending', data.pending],
-    ['recheck', data.recheck],
-    ['labelled', data.labelled],
-  ]) {
-    const shown = records.filter(about);
-    renderCards(section, shown);
-    const count = document.getElementById(`${section}-count`);
-    if (count) count.textContent = shown.length ? `(${shown.length})` : '';
+  for (const section of document.querySelectorAll('.pile')) {
+    const shown = (data[section.dataset.pile] || []).filter(about);
+    renderCards(section.querySelector('.grid'), shown);
+    section.querySelector('.count').textContent = shown.length ? `(${shown.length})` : '';
+    section.querySelector('.empty').hidden = shown.length > 0;
   }
   await loadAudit();
 }
@@ -194,8 +194,7 @@ function renderNames(names) {
 // <video>, which blanked each clip, restarted it, and shifted the layout every poll. So
 // existing cards are updated in place and only genuinely new sightings are inserted --
 // a card's video element is never touched once it exists.
-function renderCards(section, records) {
-  const host = document.getElementById(section);
+function renderCards(host, records) {
   const byId = new Map([...host.children].map((element) => [element.dataset.id, element]));
   const order = records.map((record) => record.id);
 
@@ -220,7 +219,6 @@ function renderCards(section, records) {
     byId.set(record.id, card);
   });
 
-  document.getElementById(`${section}-empty`).hidden = records.length > 0;
 }
 
 function updateCard(article, record) {
@@ -332,8 +330,23 @@ function buildCard(record) {
     event.preventDefault();
     send(article, '/api/label', { sighting_id: article.dataset.id, name: input.value });
   });
-  fragment.querySelector('.reject').addEventListener('click', () => {
-    send(article, '/api/dismiss', { sighting_id: article.dataset.id });
+  const rejecting = fragment.querySelector('.rejecting');
+  const labelling = fragment.querySelector('.label-form');
+  fragment.querySelector('.label-form .reject').addEventListener('click', () => {
+    labelling.hidden = true;
+    rejecting.hidden = false;
+    rejecting.querySelector('.note').focus();
+  });
+  rejecting.querySelector('.cancel').addEventListener('click', () => {
+    rejecting.hidden = true;
+    labelling.hidden = false;
+  });
+  rejecting.addEventListener('submit', (event) => {
+    event.preventDefault();
+    send(article, '/api/dismiss', {
+      sighting_id: article.dataset.id,
+      note: rejecting.querySelector('.note').value,
+    });
   });
   offerNames(fragment.querySelector('.picker'), input);
 
@@ -413,6 +426,29 @@ async function send(article, url, payload) {
   } finally {
     buttons.forEach((button) => (button.disabled = false));
   }
+}
+
+// A pile can be put away. With five of them, the one being worked through should not be
+// pushed off the screen by the ones that are not.
+for (const section of document.querySelectorAll('.pile')) {
+  const arrow = section.querySelector('.fold');
+  const shut = arrow.getAttribute('aria-expanded') === 'false';
+  section.classList.toggle('folded', shut);
+  arrow.addEventListener('click', () => {
+    const folded = section.classList.toggle('folded');
+    arrow.setAttribute('aria-expanded', String(!folded));
+    arrow.textContent = folded ? '▸' : '▾';
+  });
+}
+
+for (const button of document.querySelectorAll('.sort')) {
+  button.addEventListener('click', () => {
+    sortBy = button.dataset.sort;
+    for (const other of document.querySelectorAll('.sort')) {
+      other.classList.toggle('chosen', other === button);
+    }
+    loadSightings();
+  });
 }
 
 loadSightings();

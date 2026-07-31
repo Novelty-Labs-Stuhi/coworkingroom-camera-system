@@ -50,6 +50,9 @@ class LabelRequest(BaseModel):
 
 class DismissRequest(BaseModel):
     sighting_id: str
+    # Why, in the rejecter's own words. Optional, because a rejection with no reason still
+    # has to be possible -- demanding one would mean bad clips left in the gallery.
+    note: str = ""
 
 
 class RenameRequest(BaseModel):
@@ -74,6 +77,11 @@ def _as_dict(record, groups: dict[int, list[str]] | None = None) -> dict:
     size = len(together) or 1
     return {
         "id": record.sighting_id,
+        # Why it was rejected, if it was. Kept in the record so somebody working on the
+        # detector can read what it is actually getting wrong.
+        "rejected_because": record.rejected_because,
+        "dismissed": record.dismissed,
+        "checked": record.checked,
         "direction": record.direction,
         "outcome": record.outcome,
         "score": record.score,
@@ -144,26 +152,34 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
 
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/api/sightings")
-    def sightings() -> JSONResponse:
-        """The three piles: waiting to be checked, worth rechecking, and done.
+    def sightings(sort: str = "latest") -> JSONResponse:
+        """Every sighting, in the pile that says what has happened to it.
 
-        One request rather than three, because a sighting moves between them as it is saved
-        and two requests would show it in two piles at once, or in neither.
+        One request rather than five, because a sighting moves between piles as it is saved
+        and separate requests would show it in two at once, or in neither.
+
+        ``sort`` is "latest" or "odd" -- newest first, or furthest from that person's average
+        face first, which puts the likeliest mistakes at the top.
         """
         groups = review.groups()
-        rechecks = review.worth_rechecking(limit=50)
+        reasons = {
+            record.sighting_id: reason for record, reason in review.worth_rechecking(limit=50)
+        }
+        piles = review.piles(sort=sort)
         return JSONResponse(
             {
-                "pending": [_as_dict(r, groups) for r in review.pending(limit=50)],
-                "recheck": [
-                    {**_as_dict(record, groups), "reason": reason}
-                    for record, reason in rechecks
-                ],
-                "labelled": [_as_dict(r, groups) for r in review.labelled(limit=50)],
+                **{
+                    pile: [
+                        {**_as_dict(record, groups), "reason": reasons.get(record.sighting_id)}
+                        for record in records
+                    ]
+                    for pile, records in piles.items()
+                },
                 "people": review.counts(),
                 # Most recently used first: the next person through a door is very often
                 # somebody who came through recently.
                 "recent_names": review.recent_names(),
+                "sort": sort,
             }
         )
 
@@ -218,7 +234,7 @@ def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -
     @app.post("/api/dismiss")
     def dismiss(body: DismissRequest) -> JSONResponse:
         """Reject a sighting: stop offering it, and remove any reference it contributed."""
-        outcome = review.dismiss(body.sighting_id)
+        outcome = review.dismiss(body.sighting_id, body.note)
         if not outcome.succeeded:
             raise HTTPException(status_code=404, detail=outcome.value)
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})
