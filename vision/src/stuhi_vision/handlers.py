@@ -15,11 +15,15 @@ It returns a :class:`~.domain.Sighting` carrying the evidence -- score, outcome,
 
 from __future__ import annotations
 
+import logging
+
 from .domain import Crossing, Direction, Outcome, Sighting
 from .identity import Decision
 from .ledger import Ledger
 from .sessions import SessionManager, TrackSession
 from .witness import LeavingWitness
+
+_log = logging.getLogger(__name__)
 
 
 class Doorkeeper:
@@ -47,7 +51,9 @@ class Doorkeeper:
             # Said out loud, because a rejection here is indistinguishable in the record from
             # a passage that was never recognised at all, and the two need different fixes.
             seen = "no session" if session is None else f"seen {session.age} frames"
-            print(f"  -> {self._camera} crossing not counted: track {crossing.track_id}, {seen}")
+            _log.info(
+                "%s crossing not counted: track %s, %s", self._camera, crossing.track_id, seen
+            )
             return None
 
         decision = session.identity.decide()
@@ -89,7 +95,7 @@ class Doorkeeper:
             if named is not None:
                 # Printed because this is the one step no single camera can verify: whether
                 # the handover actually happened is otherwise invisible in the log.
-                print(f"  -> exit named {named} by the other camera")
+                _log.info("exit named %s by the other camera", named)
         return self._ledger.exit(session.body_embedding, timestamp, self._camera, named)
 
     def _new_guest(self) -> str:
@@ -133,7 +139,9 @@ class Identifier:
         decision = session.identity.decide()
         if crossing.direction is Direction.OUT and decision.outcome is Outcome.NAMED:
             self._witness.note(decision.name, decision.score, crossing.timestamp)
-            print(f"  -> {self._camera} saw {decision.name} leaving ({decision.score:.2f})")
+            _log.info(
+                "%s saw %s leaving (%.2f)", self._camera, decision.name, decision.score
+            )
 
         return Sighting(
             timestamp=crossing.timestamp,

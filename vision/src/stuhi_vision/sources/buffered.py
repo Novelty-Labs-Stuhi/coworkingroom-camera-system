@@ -25,6 +25,7 @@ gate makes idle frames nearly free, the backlog drains during the quiet stretche
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -32,6 +33,8 @@ from collections.abc import Iterator
 
 from ..domain import Frame
 from .base import FrameSource
+
+_log = logging.getLogger(__name__)
 
 _SENTINEL = object()  # posted by the reader when the upstream source ends
 
@@ -110,9 +113,12 @@ class BufferedSource:
         # measured here is the *consumer's* rate whenever the backlog is at capacity --
         # reading it as the camera's output, as has happened, understates it threefold.
         # A backlog well under capacity means the camera really is that slow.
-        print(
-            f"  -> {self._name or 'camera'} delivering {self._rate:.1f} fps, "
-            f"backlog peaked {self._high_water}/{self._queue.maxsize}"
+        _log.info(
+            "%s delivering %.1f fps, backlog peaked %d/%d",
+            self._name or "camera",
+            self._rate,
+            self._high_water,
+            self._queue.maxsize,
         )
         self._read_frames = 0
         self._read_since = now

@@ -6,6 +6,7 @@ modules themselves stay free of construction logic and the CLI stays thin.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, replace
 
@@ -39,6 +40,8 @@ from .visualization import encode_jpeg
 from .web import WebUI
 from .witness import LeavingWitness
 from .zones import ZoneStore
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,7 +290,7 @@ def _monitor(entry: CameraConfig, zones: ZoneStore):
         detector = replace(detector, zone=drawn.as_tuple())
 
     def report(observation) -> None:
-        print(f"  -> {entry.name} {observation.readable}")
+        _log.info("%s %s", entry.name, observation.readable)
 
     if entry.rule == "coverage":
         # Pixel change per vertical slice of the box decides the passage and its direction;
@@ -376,7 +379,7 @@ def _warn_moved(camera: str, drift: DriftWatch, shared: _Shared) -> None:
         f"{camera} appears to have moved ({reading}). Its zone was drawn on the old view, "
         f"so passages may be miscounted until it is redrawn."
     )
-    print(f"  -> {message}")
+    _log.warning(message)
     if shared.notifier is not None:
         shared.notifier.send_note(message)
     drift.acknowledge()

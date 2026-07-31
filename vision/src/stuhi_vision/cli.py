@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -18,10 +19,15 @@ app = typer.Typer(help="Single-camera, face-based occupancy tracking for the stu
 ConfigOption = Annotated[Path, typer.Option("--config", "-c", help="Path to the TOML config.")]
 
 
+_log = logging.getLogger(__name__)
+
+
 def _announce(sighting: Sighting) -> None:
     who = sighting.name or f"({sighting.outcome.value})"
     verb = "entered" if sighting.direction is Direction.IN else "left"
-    typer.echo(f"[{sighting.direction.value:<3}]  {who} {verb}  score={sighting.score:.2f}")
+    _log.info(
+        "[%-3s]  %s %s  score=%.2f", sighting.direction.value, who, verb, sighting.score
+    )
 
 
 def _tracing_observer(cfg) -> object:
@@ -72,6 +78,15 @@ def run(
     ] = False,
 ) -> None:
     """Process the configured camera/video and track occupancy live."""
+    # Stamped and in one stream, because the whole log is read to work out what happened
+    # around something that happened in the room -- a walk through the door -- and lines
+    # without a clock cannot be lined up against it. Reading the order wrongly has already
+    # cost one wrong conclusion about which way a camera counts.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(message)s",
+        datefmt="%H:%M:%S",
+    )
     cfg = config.load(config_path)
     observer = _tracing_observer(cfg) if trace else None
     application = assembly.build(cfg, announce=_announce, observer=observer)

@@ -49,17 +49,20 @@ def test_capacity_must_be_positive() -> None:
     raise AssertionError("capacity 0 should be rejected")
 
 
-def test_the_rate_report_says_how_deep_the_backlog_got(capsys) -> None:
+def test_the_rate_report_says_how_deep_the_backlog_got(caplog) -> None:
     """The rate alone is ambiguous: this reader blocks, so a full queue drags it down.
 
     Reading a throttled reader's rate as the camera's output understates it by a factor of
     three on this deployment, so the backlog is printed beside it.
     """
+    import logging
+
+    caplog.set_level(logging.INFO)
     source = BufferedSource(_frames(120), capacity=4, name="door-in")
     for _ in source:
         pass
 
-    printed = capsys.readouterr().out
+    printed = caplog.text
     assert "door-in delivering" in printed
     assert "backlog peaked" in printed
     assert "/4" in printed
