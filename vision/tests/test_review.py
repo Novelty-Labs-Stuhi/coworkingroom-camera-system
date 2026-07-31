@@ -359,3 +359,40 @@ def test_rejecting_keeps_the_reason_where_it_can_be_read(tmp_path) -> None:
     assert review.get(bad).rejected_because == "that is the door swinging, not a person"
     # Rejected is a decision too, so it leaves the queue rather than being offered again.
     assert [r.sighting_id for r in review.piles()["unchecked_unknown"]] == []
+
+
+def test_saving_as_unknown_checks_it_without_enrolling_anybody(tmp_path) -> None:
+    """"unknown" is not a person: a gallery entry by that name would match everybody."""
+    review, gallery = _queue(tmp_path)
+    nobody = review.record(_sighting())
+
+    assert review.label(nobody, "unknown") is LabelOutcome.SET_ASIDE
+
+    assert gallery.counts() == {}
+    assert review.get(nobody).labelled_as == "unknown"
+    assert review.get(nobody).checked is True
+    # Out of the queue: otherwise the only way to clear an unrecognisable frame would be to
+    # give it somebody's name.
+    assert [r.sighting_id for r in review.piles()["unchecked_unknown"]] == []
+    assert [r.sighting_id for r in review.piles()["checked_unknown"]] == [nobody]
+
+
+def test_saving_as_unknown_withdraws_a_name_it_used_to_carry(tmp_path) -> None:
+    review, gallery = _queue(tmp_path)
+    mislabelled = review.record(_sighting())
+    review.label(mislabelled, "ilari")
+    assert gallery.counts() == {"ilari": 1}
+
+    review.label(mislabelled, "unknown")
+
+    assert gallery.counts() == {}   # it must stop influencing recognition
+
+
+def test_a_sighting_with_no_face_can_still_be_set_aside(tmp_path) -> None:
+    """Nothing to enrol, but it must not be stuck in the queue for ever."""
+    review, _ = _queue(tmp_path)
+    faceless = review.record(_sighting(embedding=None))
+    (tmp_path / "review" / f"{faceless}.npy").unlink(missing_ok=True)
+
+    assert review.label(faceless, "somebody") is LabelOutcome.NO_FACE
+    assert review.label(faceless, "unknown") is LabelOutcome.SET_ASIDE

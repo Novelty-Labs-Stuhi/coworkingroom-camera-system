@@ -48,6 +48,11 @@ class LabelOutcome(Enum):
     UNLABELLED = "unlabelled"  # label taken back; the sighting returns to the pending list
     NO_FACE = "no_face"  # nothing to enrol -- no embedding was kept
     UNKNOWN_ID = "unknown_id"
+    # Saved as nobody in particular. "unknown" is not a person, so nothing is enrolled under
+    # it -- a gallery entry by that name would compete with the real people and match anybody
+    # the recogniser was unsure about. What it does mean is that somebody has looked, which
+    # is why it counts as checked and leaves the queue.
+    SET_ASIDE = "set_aside"
 
     @property
     def succeeded(self) -> bool:
@@ -57,6 +62,7 @@ class LabelOutcome(Enum):
             LabelOutcome.UNCHANGED,
             LabelOutcome.DISMISSED,
             LabelOutcome.UNLABELLED,
+            LabelOutcome.SET_ASIDE,
         )
 
 
@@ -169,6 +175,8 @@ class ReviewQueue:
             record = self._records.get(sighting_id)
             if record is None:
                 return LabelOutcome.UNKNOWN_ID
+            if _is_nobody(name):
+                return self._set_aside(record)
             embedding_path = self._dir / f"{sighting_id}.npy"
             if not embedding_path.exists():
                 return LabelOutcome.NO_FACE
@@ -190,6 +198,29 @@ class ReviewQueue:
             self._gallery.save(self._gallery_dir)
             self._remember(record, name)
             return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
+
+    def _set_aside(self, record: ReviewRecord) -> LabelOutcome:
+        """Save a sighting as nobody in particular: checked, but enrolled under no name.
+
+        "unknown" is not a person. Enrolling it would put an entry in the gallery that
+        competes with the real people and matches anybody the recogniser was unsure about --
+        the same fault that produced names like "a, yehor". But saying so *is* a decision, and
+        a decision has to take the sighting out of the queue, or the only way to clear an
+        unrecognisable frame would be to give it somebody's name.
+        """
+        previous = record.labelled_as
+        if previous and not _is_nobody(previous):
+            path = self._dir / f"{record.sighting_id}.npy"
+            if path.exists():
+                # Whatever it was enrolled as before is now withdrawn: the person has said
+                # this face belongs to nobody, so it must stop influencing recognition.
+                self._gallery.discard(previous, np.load(path))
+                self._gallery.save(self._gallery_dir)
+        self._records[record.sighting_id] = ReviewRecord(
+            **{**asdict(record), "labelled_as": "unknown", "checked": True}
+        )
+        self._flush()
+        return LabelOutcome.SET_ASIDE
 
     def label_burst(self, sighting_id: str, names: list[str]) -> list[tuple[str, LabelOutcome]]:
         """Label everyone who crossed alongside ``sighting_id``, in crossing order.
@@ -552,3 +583,8 @@ def _is_unknown(record: ReviewRecord) -> bool:
     what decides which pile it belongs in.
     """
     return (record.labelled_as or record.name or "unknown").lower() == "unknown"
+
+
+def _is_nobody(name: str) -> bool:
+    """Whether a typed name means "nobody in particular" rather than a person."""
+    return name.strip().lower() in {"unknown", "unnamed", "nobody"}

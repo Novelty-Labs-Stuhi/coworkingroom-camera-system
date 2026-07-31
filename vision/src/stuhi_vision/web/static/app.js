@@ -3,6 +3,7 @@ const MESSAGES = {
   corrected: ['ok', 'Corrected.'],
   unchanged: ['same', 'Already that name — nothing added.'],
   dismissed: ['same', 'Rejected — removed from the gallery.'],
+  set_aside: ['ok', 'Saved as unknown — checked, and enrolled under nobody.'],
   unlabelled: ['same', 'Label removed — back in the queue.'],
 };
 
