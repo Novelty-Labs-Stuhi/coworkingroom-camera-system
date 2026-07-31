@@ -72,11 +72,14 @@ section { margin-bottom: 2.5rem; }
 .current { margin: .4rem 0; font-size: .9rem; }
 .current b { color: var(--ok); }
 
-.label-form { display: flex; gap: .5rem; margin-top: .5rem; }
+/* The name field and its buttons wrap rather than compete for one row. In a narrow window
+   the three buttons took the whole width and squeezed the input to 41 px -- a label could not
+   be typed at all, which made the page useless for the one thing it is for. */
+.label-form { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 
 .name {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 9rem;
+  min-width: 7rem;   /* never squeezed below something a name fits in */
   padding: .45rem .6rem;
   border-radius: 6px;
   border: 1px solid var(--line);
