@@ -128,7 +128,7 @@ class Occlusion:
         if self._episode is None:
             self._episode = _Episode()
         self._episode.frames += 1
-        self._episode.peak = max(self._episode.peak, max(self._slices))
+        self._episode.peak = max(self._episode.peak, *self._slices)
         self._episode.rows.append(self._slices)
         middle = _middle(self._slices)
         if middle is not None:
