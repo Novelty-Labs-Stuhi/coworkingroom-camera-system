@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from dataclasses import asdict
 
 from stuhi_vision.domain import Direction, Outcome, Sighting
 from stuhi_vision.recognition.gallery import FaceGallery
@@ -281,3 +282,38 @@ def test_regrouping_is_recorded_so_it_survives_a_reload(tmp_path) -> None:
 
     reloaded = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
     assert len(reloaded.groups()) == 2
+
+
+def test_a_saved_label_never_returns_to_worth_rechecking(tmp_path) -> None:
+    """Whatever the numbers say, somebody has judged it -- offering it back argues with them."""
+    review, _ = _queue(tmp_path)
+    once = review.record(_sighting())
+    review.label(once, "ilar")           # used exactly once: what a typo looks like
+
+    assert [record.sighting_id for record, _ in review.worth_rechecking()] == []
+
+
+def test_a_name_used_once_is_worth_rechecking_until_somebody_saves_it(tmp_path) -> None:
+    review, gallery = _queue(tmp_path)
+    typo = review.record(_sighting())
+    review.label(typo, "ilar")
+    # Undo the "checked" mark the way an import or an older record would look.
+    review._records[typo] = type(review._records[typo])(
+        **{**asdict(review._records[typo]), "checked": False}
+    )
+
+    flagged = review.worth_rechecking()
+    assert [record.sighting_id for record, _ in flagged] == [typo]
+    assert "used only once" in flagged[0][1]
+
+    review.label(typo, "ilari")          # corrected and saved
+    assert review.worth_rechecking() == []
+
+
+def test_recent_names_are_offered_most_recently_used_first(tmp_path) -> None:
+    review, _ = _queue(tmp_path)
+    for offset, name in enumerate(("art", "ilari", "art", "yehor")):
+        review.label(review.record(_sighting(timestamp=1_760_000_000.0 + offset)), name)
+
+    # "art" was used again after "ilari", so it leads; each name appears once.
+    assert review.recent_names() == ["yehor", "art", "ilari"]

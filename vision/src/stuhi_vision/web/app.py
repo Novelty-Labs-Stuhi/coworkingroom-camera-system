@@ -145,12 +145,25 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/api/sightings")
     def sightings() -> JSONResponse:
+        """The three piles: waiting to be checked, worth rechecking, and done.
+
+        One request rather than three, because a sighting moves between them as it is saved
+        and two requests would show it in two piles at once, or in neither.
+        """
         groups = review.groups()
+        rechecks = review.worth_rechecking(limit=50)
         return JSONResponse(
             {
                 "pending": [_as_dict(r, groups) for r in review.pending(limit=50)],
+                "recheck": [
+                    {**_as_dict(record, groups), "reason": reason}
+                    for record, reason in rechecks
+                ],
                 "labelled": [_as_dict(r, groups) for r in review.labelled(limit=50)],
                 "people": review.counts(),
+                # Most recently used first: the next person through a door is very often
+                # somebody who came through recently.
+                "recent_names": review.recent_names(),
             }
         )
 

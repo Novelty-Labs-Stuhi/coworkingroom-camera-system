@@ -26,15 +26,25 @@
     <p class="result" id="rename-result" role="status"></p>
   </section>
 
-  <section id="check-panel">
-    <h2>Worth checking <span class="count" id="suspects-count"></span></h2>
+  <section>
+    <h2>Waiting for your check <span class="count" id="pending-count"></span></h2>
     <p class="hint">
-      These enrolled faces sit far from the rest of that person's faces &mdash; a wrong
-      name, a group labelled out of order, or the back of a head. Correct the name, or
-      reject the clip to remove it from the gallery.
+      The name in the box is the system's own answer. Confirm it, or correct it first and
+      then save &mdash; nothing is enrolled until you save.
     </p>
-    <div id="suspects" class="grid"></div>
-    <p class="empty" id="suspects-empty">Nothing looks out of place.</p>
+    <div id="pending" class="grid"></div>
+    <p class="empty" id="pending-empty">Nothing waiting. Walk through the doorway.</p>
+  </section>
+
+  <section>
+    <h2>Worth rechecking <span class="count" id="recheck-count"></span></h2>
+    <p class="hint">
+      Labels that might be wrong: a face sitting far from the rest of that person's, or a
+      name used only once &mdash; which is what a typo looks like. Saving one settles it for
+      good; it will not come back here.
+    </p>
+    <div id="recheck" class="grid"></div>
+    <p class="empty" id="recheck-empty">Nothing to recheck.</p>
 
     <h3>Needs more examples</h3>
     <p class="hint">
@@ -46,13 +56,7 @@
   </section>
 
   <section>
-    <h2>Waiting for a name <span class="count" id="pending-count"></span></h2>
-    <div id="pending" class="grid"></div>
-    <p class="empty" id="pending-empty">Nothing waiting. Walk through the doorway.</p>
-  </section>
-
-  <section>
-    <h2>Already labelled</h2>
+    <h2>Already labelled <span class="count" id="labelled-count"></span></h2>
     <p class="hint">Give a different name to correct one. The wrong reference is removed.</p>
     <div id="labelled" class="grid"></div>
     <p class="empty" id="labelled-empty">None yet.</p>
@@ -77,14 +81,18 @@
       <p class="why" hidden></p>
       <div class="together" hidden></div>
       <form class="label-form">
-        <input class="name" type="text" list="known-names" placeholder="name"
-               autocomplete="off" spellcheck="false" required>
+        <!-- The names are on a button rather than only in a datalist: a datalist needs
+             typing to open, and the answer is usually one of the last few people through. -->
+        <span class="picker">
+          <input class="name" type="text" list="known-names" placeholder="name"
+                 autocomplete="off" spellcheck="false" required>
+          <button type="button" class="choose" title="pick from recent names"
+                  aria-label="pick from recent names">&#9662;</button>
+          <ul class="choices" hidden></ul>
+        </span>
         <button type="submit">Save</button>
         <button type="button" class="reject" title="Unusable clip: remove from the gallery">
           Reject
-        </button>
-        <button type="button" class="undo" title="Wrong name: put it back in the queue">
-          Wrong name
         </button>
       </form>
       <p class="result" role="status"></p>

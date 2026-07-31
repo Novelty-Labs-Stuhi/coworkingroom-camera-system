@@ -80,6 +80,10 @@ class ReviewRecord:
     # Marked unusable by a human -- back of a head, motion blur, nobody really there. Kept
     # rather than deleted so it stops being offered without losing the evidence.
     dismissed: bool = False
+    # A person has looked at this and saved it. It never returns to "worth rechecking":
+    # whatever the audit thinks of the numbers, somebody has judged it, and offering it back
+    # would be arguing with them for ever.
+    checked: bool = False
 
     @property
     def display_name(self) -> str:
@@ -207,7 +211,9 @@ class ReviewQueue:
         return sorted(members, key=lambda r: r.position)
 
     def _remember(self, record: ReviewRecord, name: str) -> None:
-        self._records[record.sighting_id] = ReviewRecord(**{**asdict(record), "labelled_as": name})
+        self._records[record.sighting_id] = ReviewRecord(
+            **{**asdict(record), "labelled_as": name, "checked": True}
+        )
         self._flush()
 
     # --- queries ------------------------------------------------------------
@@ -404,6 +410,49 @@ class ReviewQueue:
                     )
                 )
         return found
+
+    def recent_names(self, limit: int = 20) -> list[str]:
+        """Names in the order they were last used, most recent first.
+
+        The next person through a door is very often somebody who came through recently, so
+        that order puts the likely answer at the top of the list instead of alphabetically
+        somewhere in the middle.
+        """
+        with self._lock:
+            labelled = [r for r in self._records.values() if r.labelled_as]
+        labelled.sort(key=lambda record: record.timestamp, reverse=True)
+        seen: list[str] = []
+        for record in labelled:
+            if record.labelled_as not in seen:
+                seen.append(record.labelled_as)
+        return seen[:limit]
+
+    def worth_rechecking(self, limit: int = 50) -> list[tuple[ReviewRecord, str]]:
+        """Labels that deserve a second look, each with the reason, newest first.
+
+        Two kinds, and both are about a label being *wrong* rather than missing:
+
+        * a face sitting far from the rest of that person's -- the audit's judgement;
+        * a name used exactly once, which is what a typo looks like. A real person accumulates
+          sightings; "ilar" appears once and never again.
+
+        Anything a person has already saved is left out for good. They have judged it, and
+        putting it back because the numbers still look odd would be arguing with them.
+        """
+        suspects = {suspect.sighting_id: suspect.reason for suspect in self.audit().suspects}
+        counts = self.counts()
+        found: list[tuple[ReviewRecord, str]] = []
+        with self._lock:
+            records = list(self._records.values())
+        for record in records:
+            if record.labelled_as is None or record.checked or record.dismissed:
+                continue
+            if record.sighting_id in suspects:
+                found.append((record, suspects[record.sighting_id]))
+            elif counts.get(record.labelled_as, 0) == 1:
+                found.append((record, f'"{record.labelled_as}" is used only once'))
+        found.sort(key=lambda pair: pair[0].timestamp, reverse=True)
+        return found[:limit]
 
     def audit(self) -> Audit:
         """Which enrolled faces look wrong, and who has too few examples."""

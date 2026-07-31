@@ -104,6 +104,50 @@ section { margin-bottom: 2.5rem; }
    pre-filled name cannot be mistaken for a label that has already been given. */
 .name.guessed { border-style: dashed; color: var(--warn); }
 
+/* The name box with its arrow: one control, so the arrow cannot drift away from the field
+   it fills. The list floats over the card rather than pushing it about. */
+.picker { position: relative; display: flex; flex: 1 1 9rem; min-width: 7rem; }
+.picker .name { flex: 1; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.picker .choose {
+  padding: 0 .5rem;
+  border-radius: 0 6px 6px 0;
+  border: 1px solid var(--line);
+  border-left: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
+}
+.picker .choose:hover { color: var(--text); border-color: var(--accent); filter: none; }
+.choices {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + .2rem);
+  left: 0;
+  right: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: .2rem;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+}
+.choices li { margin: 0; }
+.choices button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  font-weight: 400;
+  padding: .25rem .4rem;
+  font-size: .9rem;
+}
+.choices button:hover { background: var(--bg); filter: none; }
+.choices .empty { padding: .25rem .4rem; font-size: .85rem; }
+
 /* Renaming or merging one person, inline in their chip rather than a browser prompt -- a
    prompt cannot offer the existing names, and merging is choosing one of them. */
 .renaming { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; width: 100%; }

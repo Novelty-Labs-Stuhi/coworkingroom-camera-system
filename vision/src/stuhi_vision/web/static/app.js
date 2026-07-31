@@ -12,12 +12,22 @@ async function loadSightings() {
   const data = await response.json();
   renderPeople(data.people);
   renderNames(Object.keys(data.people));
-  renderCards('pending', data.pending);
-  renderCards('labelled', data.labelled);
-  document.getElementById('pending-count').textContent =
-    data.pending.length ? `(${data.pending.length})` : '';
+  // Most recently used first: the answer is usually one of the last few people through.
+  recentNames = data.recent_names || [];
+  for (const [section, records] of [
+    ['pending', data.pending],
+    ['recheck', data.recheck],
+    ['labelled', data.labelled],
+  ]) {
+    renderCards(section, records);
+    const count = document.getElementById(`${section}-count`);
+    if (count) count.textContent = records.length ? `(${records.length})` : '';
+  }
   await loadAudit();
 }
+
+// Offered by the arrow beside each name box, in the order the names were last used.
+let recentNames = [];
 
 // The audit is a separate call because it reads every enrolled embedding off disk, which
 // is far heavier than listing records -- no reason to pay for it on every poll of the list.
@@ -25,9 +35,7 @@ async function loadAudit() {
   const response = await fetch('/api/audit');
   if (!response.ok) return;
   const data = await response.json();
-  renderCards('suspects', data.suspects);
-  document.getElementById('suspects-count').textContent =
-    data.suspects.length ? `(${data.suspects.length})` : '';
+
   renderThin(data.thin);
 }
 
@@ -290,13 +298,48 @@ function buildCard(record) {
   fragment.querySelector('.reject').addEventListener('click', () => {
     send(article, '/api/dismiss', { sighting_id: article.dataset.id });
   });
-  // Two different mistakes, two different remedies: the clip is unusable (reject), or the
-  // clip is fine but the name was wrong (put it back in the queue).
-  fragment.querySelector('.undo').addEventListener('click', () => {
-    send(article, '/api/unlabel', { sighting_id: article.dataset.id });
-  });
+  offerNames(fragment.querySelector('.picker'), input);
 
   return article;
+}
+
+// The recent names on a button. A datalist only opens once somebody types, and the answer
+// here is usually one of the last few people through the door -- so it is worth one click.
+function offerNames(picker, input) {
+  const choices = picker.querySelector('.choices');
+  const close = () => { choices.hidden = true; };
+
+  picker.querySelector('.choose').addEventListener('click', () => {
+    if (!choices.hidden) { close(); return; }
+    choices.replaceChildren(
+      ...recentNames.map((name) => {
+        const option = document.createElement('li');
+        const pick = document.createElement('button');
+        pick.type = 'button';
+        pick.textContent = name;
+        pick.addEventListener('click', () => {
+          input.value = name;
+          input.classList.remove('guessed');   // chosen by a person now, not guessed
+          close();
+          input.focus();
+        });
+        option.append(pick);
+        return option;
+      })
+    );
+    if (!recentNames.length) {
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'no names yet';
+      choices.append(empty);
+    }
+    choices.hidden = false;
+  });
+
+  // Any click elsewhere puts it away, which is what a dropdown is expected to do.
+  document.addEventListener('click', (event) => {
+    if (!picker.contains(event.target)) close();
+  });
 }
 
 async function send(article, url, payload) {
@@ -323,7 +366,10 @@ async function send(article, url, payload) {
     result.textContent = message;
     renderPeople(body.people);
     renderNames(Object.keys(body.people));
-    setTimeout(loadSightings, 800);
+    // Gone from this pile at once, rather than after the next poll: the grid closes the gap
+    // by itself, and a card that lingers invites labelling the same clip twice.
+    article.remove();
+    loadSightings();
   } catch (error) {
     result.className = 'result bad';
     result.textContent = String(error);
