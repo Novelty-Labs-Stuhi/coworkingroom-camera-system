@@ -100,6 +100,10 @@ class Thresholds:
     detection_conf: float = 0.4  # min YOLO confidence for a person
     face_match: float = 0.35  # min cosine to accept a face as a known person
     face_margin: float = 0.05  # best name must beat the runner-up by this, else unknown
+    # Min cosine to name an exit from its own face, considering *only* the people inside.
+    # Much lower than face_match on purpose: that one has to keep strangers out of a gallery
+    # of everybody, while this one only has to pick between two or three known occupants.
+    exit_face_match: float = 0.22
     exit_similarity: float = 0.6  # min cosine to link an exit to an occupant
     exit_margin: float = 0.05  # best occupant must beat the runner-up by this, else ambiguous
     # Frames a track must exist before its crossing counts (anti-flicker). This is a

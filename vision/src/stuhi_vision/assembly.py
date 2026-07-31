@@ -132,7 +132,16 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
 
     gallery = FaceGallery.load(config.paths.gallery_dir)
     store = EventStore(config.paths.database)
-    ledger = Ledger(store, thresholds.exit_similarity, thresholds.exit_margin)
+    ledger = Ledger(
+        store,
+        thresholds.exit_similarity,
+        thresholds.exit_margin,
+        # Exits are matched against the people inside, which is a far smaller field than the
+        # door faces: a weak face can still settle it. Same gallery, so a label takes effect
+        # here on the next exit too.
+        faces=gallery.rank,
+        face_similarity=thresholds.exit_face_match,
+    )
     review = ReviewQueue(config.paths.review_dir, gallery, config.paths.gallery_dir)
 
     notifier: TelegramNotifier | None = None

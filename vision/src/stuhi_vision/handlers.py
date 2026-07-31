@@ -96,7 +96,16 @@ class Doorkeeper:
                 # Printed because this is the one step no single camera can verify: whether
                 # the handover actually happened is otherwise invisible in the log.
                 _log.info("exit named %s by the other camera", named)
-        return self._ledger.exit(session.body_embedding, timestamp, self._camera, named)
+        # The face goes too, even when it named nobody at the door: the ledger asks a much
+        # easier question of it -- which of the people inside is this -- and a face too poor
+        # to win against the whole gallery can win outright among three known candidates.
+        return self._ledger.exit(
+            session.body_embedding,
+            timestamp,
+            self._camera,
+            named,
+            face_embedding=session.face_embedding,
+        )
 
     def _new_guest(self) -> str:
         self._guests += 1

@@ -99,3 +99,78 @@ def test_events_carry_the_camera_that_saw_them() -> None:
     ledger.enter("alice", None, timestamp=1.0, camera="door-in")
 
     assert sink.events[0].camera == "door-in"
+
+
+def _ranker(scores: dict[str, float]):
+    """Stand in for the gallery: fixed scores, best first, as rank() returns them."""
+    from stuhi_vision.recognition.embeddings import Match
+
+    ordered = sorted(scores.items(), key=lambda pair: -pair[1])
+    return lambda embedding: [Match(name=name, score=score) for name, score in ordered]
+
+
+def test_an_exit_is_named_from_the_people_inside_by_a_face_too_weak_for_the_door() -> None:
+    """The whole point: a poor face only has to beat the people in the room.
+
+    At the door a face competes with everybody enrolled and must clear a threshold that keeps
+    strangers out. Leaving, the answer is almost certainly one of two or three known occupants,
+    so a low-resolution camera can still settle it.
+    """
+    sink = FakeSink()
+    ledger = Ledger(
+        sink,
+        exit_similarity=0.9,
+        exit_margin=0.05,
+        faces=_ranker({"alice": 0.28, "bob": 0.11, "stranger": 0.95}),
+        face_similarity=0.22,
+    )
+    ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
+    ledger.enter("bob", np.array([0.0, 1.0]), timestamp=2.0)
+
+    # 0.28 would be "unknown" at the door, and the strongest match overall is somebody who is
+    # not even in the room -- so only the occupants may be considered.
+    assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) == "alice"
+    assert ledger.occupancy == ["bob"]
+
+
+def test_a_face_that_suits_two_occupants_equally_names_neither() -> None:
+    sink = FakeSink()
+    ledger = Ledger(
+        sink,
+        exit_similarity=0.9,
+        exit_margin=0.05,
+        faces=_ranker({"alice": 0.30, "bob": 0.29}),
+        face_similarity=0.22,
+    )
+    ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
+    ledger.enter("bob", np.array([0.0, 1.0]), timestamp=2.0)
+
+    assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) is None
+    assert ledger.occupancy == ["alice", "bob"]      # nobody removed on a coin-flip
+
+
+def test_a_name_a_camera_read_still_wins_over_the_pool() -> None:
+    sink = FakeSink()
+    ledger = Ledger(
+        sink,
+        exit_similarity=0.9,
+        exit_margin=0.05,
+        faces=_ranker({"alice": 0.40, "bob": 0.10}),
+        face_similarity=0.22,
+    )
+    ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
+    ledger.enter("bob", np.array([0.0, 1.0]), timestamp=2.0)
+
+    who = ledger.exit(None, timestamp=3.0, name="bob", face_embedding=np.array([1.0]))
+    assert who == "bob"
+
+
+def test_the_pool_is_ignored_when_nobody_is_inside() -> None:
+    ledger = Ledger(
+        FakeSink(),
+        exit_similarity=0.9,
+        exit_margin=0.05,
+        faces=_ranker({"alice": 0.99}),
+        face_similarity=0.22,
+    )
+    assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) is None

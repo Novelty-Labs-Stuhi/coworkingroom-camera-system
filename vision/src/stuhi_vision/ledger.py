@@ -1,13 +1,20 @@
 """The occupancy ledger -- the live set of who is currently inside.
 
 Entries are named by the face recogniser and stored with one body embedding (the crop
-from the clearest-face frame). Exits carry no face, so an exit is linked to whoever is
-inside by comparing its body embedding to each occupant's:
+from the clearest-face frame). An exit is linked to whoever is inside, in order of how
+much the evidence is worth:
 
-* one candidate inside -> elimination: it is them;
-* several inside -> the closest occupant wins, but only if it clears a similarity
-  threshold AND beats the runner-up by a margin. Otherwise the exit is left
-  unattributed rather than guessed.
+* the name a camera read off a face and passed in;
+* **the exit's own face, matched against the people inside only.** This is a much easier
+  question than the one the recogniser answers at the door. There, a face competes with
+  everybody ever enrolled and has to clear a threshold that keeps strangers out. Here the
+  answer is almost certainly one of two or three people the ledger already knows are in the
+  room, so a face too poor to win open-set can still win outright among three -- which is
+  what makes a low-resolution camera usable for exits;
+* the body embedding: one candidate inside -> elimination, several -> the closest occupant
+  wins only if it clears a threshold AND beats the runner-up by a margin.
+
+Anything unresolved is recorded as unattributed rather than guessed.
 """
 
 from __future__ import annotations
@@ -35,10 +42,22 @@ class Occupant:
 class Ledger:
     """In-memory occupancy, journalled to an :class:`EventSink` as it changes."""
 
-    def __init__(self, sink: EventSink, exit_similarity: float, exit_margin: float) -> None:
+    def __init__(
+        self,
+        sink: EventSink,
+        exit_similarity: float,
+        exit_margin: float,
+        faces=None,
+        face_similarity: float = 0.22,
+    ) -> None:
         self._sink = sink
         self._similarity = exit_similarity
         self._margin = exit_margin
+        # Ranks a face against every enrolled name (the gallery's own ``rank``). Only the
+        # people inside are considered, so the threshold can be far lower than the door's:
+        # beating two or three known candidates is a much weaker claim than beating everybody.
+        self._faces = faces
+        self._face_similarity = face_similarity
         self._inside: dict[str, Occupant] = {}
         # Occupancy is one fact about one room, but with a camera per direction two
         # pipelines commit into it from their own threads. Without this, an entry and an
@@ -81,6 +100,7 @@ class Ledger:
         timestamp: float,
         camera: str = "",
         name: str | None = None,
+        face_embedding: np.ndarray | None = None,
     ) -> str | None:
         """Remove an occupant and journal the exit. Returns who left, if it can be told.
 
@@ -93,11 +113,33 @@ class Ledger:
         permanently and no amount of walking out could correct it.
         """
         with self._lock:
-            resolved = name if name in self._inside else self._attribute(body_embedding)
+            resolved = name if name in self._inside else None
+            if resolved is None:
+                resolved = self._among_occupants(face_embedding)
+            if resolved is None:
+                resolved = self._attribute(body_embedding)
             if resolved is not None:
                 del self._inside[resolved]
             self._sink.record(Event(timestamp, resolved or UNATTRIBUTED, Direction.OUT, camera))
             return resolved
+
+    def _among_occupants(self, face: np.ndarray | None) -> str | None:
+        """Which of the people inside this face belongs to, if any of them clearly.
+
+        Deliberately a low bar: the field is two or three people who are known to be in the
+        room, not everybody ever enrolled. What still has to hold is that one of them beats
+        the others by a margin -- a face that suits two occupants equally names neither.
+        """
+        if face is None or self._faces is None or not self._inside:
+            return None
+        inside = [match for match in self._faces(face) if match.name in self._inside]
+        if not inside:
+            return None
+        best = inside[0]
+        if best.score < self._face_similarity:
+            return None
+        runner_up = inside[1].score if len(inside) > 1 else 0.0
+        return best.name if best.score - runner_up >= self._margin else None
 
     def _attribute(self, query: np.ndarray | None) -> str | None:
         if not self._inside:
