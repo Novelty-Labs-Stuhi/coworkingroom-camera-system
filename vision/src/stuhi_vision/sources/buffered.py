@@ -100,12 +100,23 @@ class BufferedSource:
         self._read_frames += 1
         if self._read_frames < 100:
             return
-        elapsed = now - self._read_since
-        if elapsed > 0:
-            self._rate = self._read_frames / elapsed
-            print(f"  -> {self._name or 'camera'} delivering {self._rate:.1f} fps")
+        # A coarse clock can read the interval as exactly zero over a fast hundred frames,
+        # and the report used to be skipped entirely when it did -- so a source fast enough
+        # to be interesting was the one that never said anything.
+        elapsed = max(now - self._read_since, 1e-6)
+        self._rate = self._read_frames / elapsed
+        # The backlog is reported with the rate because the two together say which of
+        # them is the bottleneck. This reader blocks when the queue is full, so a rate
+        # measured here is the *consumer's* rate whenever the backlog is at capacity --
+        # reading it as the camera's output, as has happened, understates it threefold.
+        # A backlog well under capacity means the camera really is that slow.
+        print(
+            f"  -> {self._name or 'camera'} delivering {self._rate:.1f} fps, "
+            f"backlog peaked {self._high_water}/{self._queue.maxsize}"
+        )
         self._read_frames = 0
         self._read_since = now
+        self._high_water = 0
 
     def _offer(self, frame: Frame) -> None:
         """Enqueue a frame, waiting if the consumer is behind. Never discards."""
