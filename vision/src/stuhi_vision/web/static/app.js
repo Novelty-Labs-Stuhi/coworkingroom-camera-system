@@ -64,9 +64,9 @@ function renderPeople(people) {
       const fix = document.createElement('button');
       fix.className = 'fix';
       fix.type = 'button';
-      fix.textContent = 'rename';
-      fix.title = `correct the spelling of "${name}" everywhere it was used`;
-      fix.addEventListener('click', () => renameEverywhere(name, people[name]));
+      fix.textContent = 'rename / merge';
+      fix.title = `rename "${name}" everywhere, or merge it into another person`;
+      fix.addEventListener('click', () => askAbout(item, name, people[name]));
       item.append(label, count, fix);
       return item;
     })
@@ -74,21 +74,51 @@ function renderPeople(people) {
   document.getElementById('people-empty').hidden = names.length > 0;
 }
 
-async function renameEverywhere(name, references) {
-  const corrected = window.prompt(
-    `Correct the spelling of "${name}" on all ${references} reference(s), `
-    + 'every clip labelled with it, and the recorded history.
+// One control for both, because they are the same operation: a name is replaced everywhere it
+// was used, and if the replacement already exists the two become one person. Known names are
+// offered, so merging is picking from a list rather than spelling something exactly right.
+function askAbout(item, name, references) {
+  if (item.querySelector('form')) return;
+  const form = document.createElement('form');
+  form.className = 'renaming';
 
-'
-    + 'Typing a name that already exists merges the two into one person.',
-    name
-  );
-  if (!corrected || corrected.trim() === name) return;
+  const field = document.createElement('input');
+  field.className = 'name';
+  field.value = name;
+  field.setAttribute('list', 'known-names');
+  field.title = 'a new spelling, or an existing person to merge into';
 
+  const apply = document.createElement('button');
+  apply.type = 'submit';
+  apply.textContent = 'apply';
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'reject';
+  cancel.textContent = 'cancel';
+  cancel.addEventListener('click', () => form.remove());
+
+  form.append(field, apply, cancel);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const wanted = field.value.trim();
+    if (!wanted || wanted === name) {
+      form.remove();
+      return;
+    }
+    form.remove();
+    renameEverywhere(name, wanted, references);
+  });
+  item.append(form);
+  field.focus();
+  field.select();
+}
+
+async function renameEverywhere(name, corrected, references) {
   const response = await fetch('/api/rename', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ old: name, new: corrected.trim() }),
+    body: JSON.stringify({ old: name, new: corrected }),
   });
   const body = await response.json();
   const note = document.getElementById('rename-result');
@@ -98,8 +128,9 @@ async function renameEverywhere(name, references) {
     return;
   }
   note.className = 'result ok';
-  note.textContent = `Now "${body.renamed}": ${body.clips} clip(s) and `
-    + `${body.events} history entr(y/ies) corrected.`;
+  const merged = body.people[body.renamed] > references;
+  note.textContent = `${merged ? 'Merged into' : 'Now'} "${body.renamed}": ${body.clips} `
+    + `clip(s) and ${body.events} history entr(y/ies) corrected.`;
   load();
 }
 
@@ -168,8 +199,15 @@ function updateCard(article, record) {
   }
 
   const input = article.querySelector('.name');
-  // Never overwrite what someone is in the middle of typing.
-  if (record.labelled_as && document.activeElement !== input) input.value = record.labelled_as;
+  // The system's own answer goes in the field: a name it recognised, or nothing when it did
+  // not. So the job is confirming or correcting rather than typing every name from scratch --
+  // and a guess sitting in the box is visible, which typing into an empty box never made it.
+  // Never overwrite what somebody is part-way through typing.
+  if (document.activeElement !== input) {
+    const guess = record.labelled_as || (record.outcome === 'named' ? record.name : '');
+    input.value = guess || '';
+    input.classList.toggle('guessed', !record.labelled_as && Boolean(guess));
+  }
 }
 
 // Everybody who came through with this person, in the order they crossed. Shown because that

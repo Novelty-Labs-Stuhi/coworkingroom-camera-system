@@ -100,6 +100,15 @@ section { margin-bottom: 2.5rem; }
   font-size: .95rem;
 }
 .name:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The system's guess, not somebody's answer: it looks provisional until confirmed, so a
+   pre-filled name cannot be mistaken for a label that has already been given. */
+.name.guessed { border-style: dashed; color: var(--warn); }
+
+/* Renaming or merging one person, inline in their chip rather than a browser prompt -- a
+   prompt cannot offer the existing names, and merging is choosing one of them. */
+.renaming { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; width: 100%; }
+.renaming .name { flex: 1 1 7rem; min-width: 6rem; font-size: .85rem; padding: .25rem .4rem; }
+.renaming button { padding: .25rem .5rem; font-size: .78rem; }
 
 button {
   padding: .45rem .9rem;
