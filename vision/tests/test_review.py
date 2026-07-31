@@ -270,8 +270,10 @@ def test_regrouping_rebuilds_groups_from_the_gaps_between_crossings(tmp_path) ->
 
     groups = review.groups()
     assert changed >= 1
-    assert sorted(groups[1]) == sorted(together)   # the two that really were together
-    assert groups[2] == [later]                    # the straggler is its own group
+    # Groups are keyed by the moment they began, so a repaired group cannot collide with one
+    # the pipeline issues after a restart.
+    assert sorted(groups[1_760_000_000]) == sorted(together)
+    assert groups[1_760_000_400] == [later]        # the straggler is its own group
     assert review.get(later).position == 1
 
 

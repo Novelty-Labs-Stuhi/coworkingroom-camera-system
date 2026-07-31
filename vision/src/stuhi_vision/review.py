@@ -271,7 +271,9 @@ class ReviewQueue:
             previous: float | None = None
             for record in in_order:
                 if previous is None or record.timestamp - previous > gap_seconds:
-                    burst += 1
+                    # The moment the group began, matching what the pipeline now issues, so
+                    # repaired groups and new ones cannot collide with each other either.
+                    burst = int(record.timestamp)
                     position = 0
                 previous = record.timestamp
                 position += 1

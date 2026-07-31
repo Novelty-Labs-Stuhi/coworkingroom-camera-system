@@ -60,7 +60,7 @@ class SightingPublisher:
         self._clear_frames = max(1, clear_frames)
         self._gap = max(burst_gap_seconds, 0.0)
         self._held: list[_Held] = []
-        self._burst = 0
+        self._burst = 0   # replaced by the first crossing's timestamp
         # How many crossed in each recent burst, so a caption can say "2 of 3" correctly even
         # though the clips finish at different moments.
         self._sizes: dict[int, int] = {}
@@ -85,7 +85,11 @@ class SightingPublisher:
         separate passages, minutes apart.
         """
         if self._last_crossing is None or sighting.timestamp - self._last_crossing > self._gap:
-            self._burst += 1  # too long since the last one: a new group
+            # The moment the group began *is* its id. A counter starts again at one in every
+            # process, so each restart re-issued ids that already existed and unrelated
+            # sightings collided into one group -- a clip days old offered as "1 of 4
+            # together". Two groups cannot begin in the same second: that would be one group.
+            self._burst = int(sighting.timestamp)
             self._forget_old_bursts()
         self._last_crossing = sighting.timestamp
         self._sizes[self._burst] = self._sizes.get(self._burst, 0) + 1

@@ -136,7 +136,8 @@ def test_numbering_restarts_after_a_gap_between_crossings() -> None:
     publisher.advance(people_present=False)
 
     assert [p.position for p in published] == [1, 1]
-    assert [p.burst for p in published] == [1, 2]
+    # The id is the moment each group began, so two groups are two ids without a counter.
+    assert [p.burst for p in published] == [100, 140]
 
 
 def test_a_busy_room_does_not_glue_every_crossing_into_one_group() -> None:
@@ -162,4 +163,21 @@ def test_people_crossing_together_are_still_one_group() -> None:
     publisher.advance(people_present=False)
 
     assert [(p.position, p.total) for p in published] == [(1, 3), (2, 3), (3, 3)]
-    assert {p.burst for p in published} == {1}
+    assert {p.burst for p in published} == {500}   # all three carry the group's start
+
+
+def test_group_ids_do_not_repeat_after_a_restart() -> None:
+    """A counter starts again at one in every process, and the ids are stored.
+
+    Live, that put a clip from three days earlier in the same "group" as tonight's, and the
+    page asked for four names in crossing order for four unrelated passages.
+    """
+    _, monday, published = _setup(clear_frames=1)
+    monday.hold(_sighting(timestamp=1_785_200_000.0))
+    monday.advance(people_present=False)
+
+    _, thursday, later = _setup(clear_frames=1)     # a restart: a fresh publisher
+    thursday.hold(_sighting(timestamp=1_785_536_168.0))
+    thursday.advance(people_present=False)
+
+    assert published[0].burst != later[0].burst
