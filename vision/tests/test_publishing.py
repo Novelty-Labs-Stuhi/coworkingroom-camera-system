@@ -7,9 +7,9 @@ from stuhi_vision.domain import Direction, Outcome, Sighting
 from stuhi_vision.publishing import Publication, SightingPublisher
 
 
-def _sighting() -> Sighting:
+def _sighting(timestamp: float = 1.0) -> Sighting:
     return Sighting(
-        timestamp=1.0,
+        timestamp=timestamp,
         direction=Direction.IN,
         name=None,
         score=0.1,
@@ -121,11 +121,45 @@ def test_a_lone_crossing_is_not_numbered() -> None:
     assert (published[0].position, published[0].total) == (1, 1)  # caption omits it
 
 
-def test_numbering_restarts_for_the_next_burst() -> None:
+def test_numbering_restarts_after_a_gap_between_crossings() -> None:
+    """A burst is people who came through *together*, decided by the gap between crossings.
+
+    It used to end only when every held clip had finished, and a clip's completion counter
+    resets whenever anybody is in view -- so in a busy room nothing finished and every crossing
+    joined the same group. The page offered a clip as "1 of 23 together", asking for twenty-three
+    names in crossing order for twenty-three separate passages minutes apart.
+    """
     _, publisher, published = _setup(clear_frames=1)
-    publisher.hold(_sighting())
+    publisher.hold(_sighting(timestamp=100.0))
     publisher.advance(people_present=False)
-    publisher.hold(_sighting())
+    publisher.hold(_sighting(timestamp=140.0))     # forty seconds later: not a group
     publisher.advance(people_present=False)
 
     assert [p.position for p in published] == [1, 1]
+    assert [p.burst for p in published] == [1, 2]
+
+
+def test_a_busy_room_does_not_glue_every_crossing_into_one_group() -> None:
+    """The case seen live: people about, so no clip ever cleared, so the burst never ended."""
+    _, publisher, published = _setup(clear_frames=2)
+
+    for minute in range(5):
+        publisher.hold(_sighting(timestamp=1000.0 + minute * 60))
+        publisher.advance(people_present=True)     # somebody is always in view
+        publisher.advance(people_present=True)
+
+    publisher.advance(people_present=False)
+    publisher.advance(people_present=False)
+
+    assert [p.position for p in published] == [1, 1, 1, 1, 1]
+    assert [p.total for p in published] == [1, 1, 1, 1, 1]
+
+
+def test_people_crossing_together_are_still_one_group() -> None:
+    _, publisher, published = _setup(clear_frames=1)
+    for offset in (0.0, 0.9, 1.8):                 # within the gap: a real group
+        publisher.hold(_sighting(timestamp=500.0 + offset))
+    publisher.advance(people_present=False)
+
+    assert [(p.position, p.total) for p in published] == [(1, 3), (2, 3), (3, 3)]
+    assert {p.burst for p in published} == {1}
