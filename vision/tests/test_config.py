@@ -261,3 +261,34 @@ discriminator = "approach"
     assert attention is not None   # the pixels also decide when the detector wakes
     assert isinstance(plain, ThresholdMonitor)
     assert none is None
+
+
+def test_a_camera_can_set_its_own_motion_gate(tmp_path: Path) -> None:
+    """The right gate belongs to the view: the dark corridor needs none, the lit room can."""
+    from stuhi_vision.assembly import _motion
+
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "corridor"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.12, 1.0]
+motion_min_fraction = 0.0
+
+[[camera]]
+name = "room"
+target = "http://two/stream"
+zone = [0.0, 0.0, 1.0, 1.0]
+
+[performance]
+motion_min_fraction = 0.004
+""",
+        )
+    )
+    corridor, room = cfg.cameras
+    # Stated zero must survive: falling back on it would re-enable the gate that suppressed
+    # the frames holding a person in the dark, which is a silent loss of every passage.
+    assert _motion(corridor, cfg.performance) == 0.0
+    assert _motion(room, cfg.performance) == 0.004

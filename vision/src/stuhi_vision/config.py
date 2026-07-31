@@ -77,6 +77,11 @@ class CameraConfig:
     role: Role = "count"
     rule: Rule = "tracks"
     coverage: CoverageConfig = field(default_factory=CoverageConfig)
+    # Fraction of this camera's frame that must change before the detector is run at all.
+    # Per camera because the right value is a property of the view: a dark corridor needs
+    # zero, or the gate suppresses the frames that hold a person, while a lit room can skip
+    # most of the day. None means "whatever [performance] says".
+    motion_min_fraction: float | None = None
 
     @property
     def doorway(self) -> DoorwayConfig | None:
@@ -259,6 +264,7 @@ def _cameras(data: dict) -> list[CameraConfig]:
             role=entry.get("role", "count"),
             rule=entry.get("rule", "tracks"),
             coverage=_coverage(entry),
+            motion_min_fraction=entry.get("motion_min_fraction"),
         )
         for index, entry in enumerate(entries)
     ]

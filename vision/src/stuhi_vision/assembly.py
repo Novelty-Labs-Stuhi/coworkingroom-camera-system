@@ -226,7 +226,7 @@ def _build_camera(
                 detection_conf=thresholds.detection_conf,
                 imgsz=performance.detect_imgsz,
             ),
-            gate=MotionGate(min_fraction=performance.motion_min_fraction),
+            gate=MotionGate(min_fraction=_motion(entry, performance)),
             region_builder=_region_builder(entry, performance.crop_padding),
         ),
         doorway=monitor,
@@ -259,6 +259,18 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
     return Doorkeeper(
         sessions, shared.ledger, min_age, camera=entry.name, witness=shared.witness
     )
+
+
+def _motion(entry: CameraConfig, performance) -> float:
+    """How much of this camera's frame must change before the detector runs.
+
+    The right value belongs to the view, not the deployment: the dark corridor needs zero,
+    because there the gate suppressed the very frames that held a person, while the lit room
+    can sleep through most of a day. A camera that says nothing takes the shared default.
+    """
+    if entry.motion_min_fraction is None:
+        return performance.motion_min_fraction
+    return entry.motion_min_fraction
 
 
 def _monitor(entry: CameraConfig, zones: ZoneStore):
