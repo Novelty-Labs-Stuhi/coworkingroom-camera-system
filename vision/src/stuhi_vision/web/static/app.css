@@ -38,6 +38,17 @@ section { margin-bottom: 2.5rem; }
   font-size: .9rem;
 }
 .people b { font-weight: 600; }
+/* Small and quiet: renaming is occasional, and it must not compete with labelling. */
+.people .fix {
+  margin-left: .5rem;
+  padding: 0 .35rem;
+  font-size: .72rem;
+  font-weight: 400;
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+}
+.people .fix:hover { border-color: var(--accent); color: var(--text); filter: none; }
 .people span { color: var(--muted); }
 
 .grid {

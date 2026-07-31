@@ -13,7 +13,7 @@ inside by comparing its body embedding to each occupant's:
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -60,6 +60,20 @@ class Ledger:
         with self._lock:
             self._inside[name] = Occupant(name, timestamp, body_embedding)
             self._sink.record(Event(timestamp, name, Direction.IN, camera))
+
+    def rename(self, old: str, new: str) -> bool:
+        """Follow a corrected name for somebody currently inside. False if they are not.
+
+        Occupancy is keyed by name, so a rename that skipped it would leave the old spelling
+        inside for ever: their exit would arrive under the new name, match nobody, and the
+        count would never come back down.
+        """
+        with self._lock:
+            occupant = self._inside.pop(old, None)
+            if occupant is None:
+                return False
+            self._inside[new] = replace(occupant, name=new)
+            return True
 
     def exit(
         self,

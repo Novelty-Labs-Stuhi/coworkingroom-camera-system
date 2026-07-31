@@ -206,3 +206,47 @@ def test_composite_labels_are_reported(tmp_path) -> None:
     queue.label(bad, "a, yehor")
 
     assert [r.sighting_id for r in queue.composite_labels()] == [bad]
+
+
+def test_renaming_corrects_the_name_on_every_clip_and_in_the_gallery(tmp_path) -> None:
+    """A misspelling is one mistake, not one per sighting."""
+    review, gallery = _queue(tmp_path)
+    first = review.record(_sighting(np.array([1.0, 0.0, 0.0])))
+    second = review.record(_sighting(np.array([0.0, 1.0, 0.0])))
+    review.label(first, "ilar")
+    review.label(second, "ilar")
+
+    moved = review.rename("ilar", "ilari")
+
+    assert moved == 2
+    assert review.counts() == {"ilari": 2}
+    assert review.get(first).labelled_as == "ilari"
+    assert gallery.names == ["ilari"]
+
+
+def test_renaming_onto_an_existing_name_merges_them(tmp_path) -> None:
+    """"ilari" and "Ilari" being the same person is exactly what a merge means."""
+    review, _ = _queue(tmp_path)
+    review.label(review.record(_sighting(np.array([1.0, 0.0, 0.0]))), "ilari")
+    review.label(review.record(_sighting(np.array([0.0, 1.0, 0.0]))), "Ilari")
+
+    review.rename("Ilari", "ilari")
+
+    assert review.counts() == {"ilari": 2}
+
+
+def test_renaming_survives_a_reload(tmp_path) -> None:
+    review, _ = _queue(tmp_path)
+    review.label(review.record(_sighting()), "yehor")
+    review.rename("yehor", "Yehor")
+
+    reloaded = ReviewQueue(
+        tmp_path / "review", FaceGallery.load(tmp_path / "gallery"), tmp_path / "gallery"
+    )
+    assert reloaded.counts() == {"Yehor": 1}
+
+
+def test_renaming_a_name_nobody_has_changes_nothing(tmp_path) -> None:
+    review, _ = _queue(tmp_path)
+    assert review.rename("nobody", "somebody") == 0
+    assert review.rename("same", "same") == 0

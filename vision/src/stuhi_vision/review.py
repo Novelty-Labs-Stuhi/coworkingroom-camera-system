@@ -287,6 +287,33 @@ class ReviewQueue:
             self._flush()
             return LabelOutcome.UNLABELLED
 
+    def rename(self, old: str, new: str) -> int:
+        """Correct a name everywhere it was used: the gallery and every sighting labelled it.
+
+        A misspelling is one mistake, not one per sighting. Doing it by hand means unlabelling
+        and relabelling each clip, which discards and re-adds reference vectors -- more work and
+        more ways to lose one. If the corrected name already exists the two merge, which is what
+        "ilari" and "Ilari" being the same person means.
+
+        Returns how many sightings were relabelled.
+        """
+        old, new = old.strip(), new.strip()
+        if not old or not new or old == new:
+            return 0
+        with self._lock:
+            moved = 0
+            for sighting_id, record in list(self._records.items()):
+                if record.labelled_as != old:
+                    continue
+                self._records[sighting_id] = ReviewRecord(
+                    **{**asdict(record), "labelled_as": new}
+                )
+                moved += 1
+            self._gallery.rename(old, new)
+            self._gallery.save(self._gallery_dir)
+            self._flush()
+            return moved
+
     def composite_labels(self) -> list[ReviewRecord]:
         """Labels that are really several names in one string.
 

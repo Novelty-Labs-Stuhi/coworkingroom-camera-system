@@ -52,6 +52,13 @@ class DismissRequest(BaseModel):
     sighting_id: str
 
 
+class RenameRequest(BaseModel):
+    """Correct a name wherever it was used -- a misspelling is one mistake, not one per clip."""
+
+    old: str
+    new: str
+
+
 class ZoneRequest(BaseModel):
     """A rectangle dragged on a camera's live frame, in fractions of it."""
 
@@ -159,6 +166,38 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
         """
         return _apply_label(review, body.sighting_id, body.name)
 
+
+def _apply_rename(review: ReviewQueue, history, ledger, body: RenameRequest) -> JSONResponse:
+    """Correct one name wherever it was used.
+
+    Merges when the corrected name already exists, because that is what "ilari" and "Ilari"
+    being one person means. The history is included deliberately: leaving both spellings there
+    makes one person read as two who each came and went half the time. And whoever is inside
+    right now moves with it, or their exit would arrive under a name nobody is holding.
+    """
+    names = parse_names(body.new)
+    if len(names) != 1:
+        raise HTTPException(status_code=400, detail="give exactly one corrected name")
+    corrected = names[0]
+    relabelled = review.rename(body.old, corrected)
+    if relabelled == 0 and body.old not in review.counts():
+        raise HTTPException(status_code=404, detail=f"nobody is labelled {body.old}")
+    events = history.rename(body.old, corrected) if history is not None else 0
+    if ledger is not None:
+        ledger.rename(body.old, corrected)
+    return JSONResponse(
+        {
+            "renamed": corrected,
+            "clips": relabelled,
+            "events": events,
+            "people": review.counts(),
+        }
+    )
+
+
+def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -> None:
+    """Taking a label back, and correcting a name everywhere it was used."""
+
     @app.post("/api/dismiss")
     def dismiss(body: DismissRequest) -> JSONResponse:
         """Reject a sighting: stop offering it, and remove any reference it contributed."""
@@ -166,6 +205,11 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
         if not outcome.succeeded:
             raise HTTPException(status_code=404, detail=outcome.value)
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})
+
+    @app.post("/api/rename")
+    def rename(body: RenameRequest) -> JSONResponse:
+        """Correct a spelling everywhere: the gallery, every labelled clip, and the history."""
+        return _apply_rename(review, history, ledger, body)
 
     @app.post("/api/unlabel")
     def unlabel(body: DismissRequest) -> JSONResponse:
@@ -291,7 +335,9 @@ def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
         return FileResponse(path, media_type="image/jpeg")
 
 
-def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> FastAPI:
+def create_app(
+    review: ReviewQueue, frames=None, zones=None, drift=None, history=None, ledger=None
+) -> FastAPI:
     """Build the labelling UI over an existing review queue."""
     app = FastAPI(title="stuhi labelling")
     templates = Jinja2Templates(directory=str(_HERE / "templates"))
@@ -310,6 +356,7 @@ def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> Fast
         )
 
     _add_api_routes(app, review)
+    _add_correction_routes(app, review, history, ledger)
     _add_media_routes(app, review)
     if frames is not None and zones is not None:
         _add_camera_routes(app, frames, zones, drift or {})
@@ -320,19 +367,8 @@ def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> Fast
 class WebUI:
     """Runs the labelling UI in a background thread for the lifetime of the pipeline."""
 
-    def __init__(
-        self,
-        review: ReviewQueue,
-        frames=None,
-        zones=None,
-        drift=None,
-        host: str = "0.0.0.0",
-        port: int = 8800,
-    ) -> None:
-        self._review = review
-        self._frames = frames
-        self._zones = zones
-        self._drift = drift
+    def __init__(self, app: FastAPI, host: str = "0.0.0.0", port: int = 8800) -> None:
+        self._app = app
         self._host = host
         self._port = port
         self._server = None
@@ -342,7 +378,7 @@ class WebUI:
         import uvicorn
 
         config = uvicorn.Config(
-            create_app(self._review, self._frames, self._zones, self._drift),
+            self._app,
             host=self._host,
             port=self._port,
             log_level="warning",

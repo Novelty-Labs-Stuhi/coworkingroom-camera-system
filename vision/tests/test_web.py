@@ -150,3 +150,56 @@ def test_the_pages_version_their_stylesheet_so_a_fix_is_not_invisible(tmp_path) 
         body = client.get(page).text
         assert "/static/app.css?v=" in body
         assert "?v={{" not in body   # the token is rendered, not left as a placeholder
+
+
+def test_renaming_through_the_api_corrects_clips_gallery_and_history(tmp_path) -> None:
+    """One request fixes a misspelling everywhere it landed."""
+    import numpy as np
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.domain import Event
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.store import EventStore
+    from stuhi_vision.web.app import create_app
+
+    gallery = FaceGallery()
+    review = ReviewQueue(tmp_path / "review", gallery, tmp_path / "gallery")
+    sighting_id = review.record(
+        Sighting(
+            timestamp=1_760_000_000.0,
+            direction=Direction.IN,
+            name=None,
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=None,
+        )
+    )
+    review.label(sighting_id, "ilar")
+
+    history = EventStore(tmp_path / "events.db")
+    history.record(Event(timestamp=1.0, name="ilar", direction=Direction.IN, camera="door-in"))
+    history.record(Event(timestamp=2.0, name="ilar", direction=Direction.OUT, camera="door-in"))
+
+    client = TestClient(create_app(review, history=history))
+    body = client.post("/api/rename", json={"old": "ilar", "new": "Ilari"}).json()
+
+    assert body == {"renamed": "Ilari", "clips": 1, "events": 2, "people": {"Ilari": 1}}
+    assert [row[1] for row in history.recent()] == ["Ilari", "Ilari"]
+    history.close()
+
+
+def test_renaming_refuses_a_list_of_names(tmp_path) -> None:
+    """"a, b" is not a corrected spelling; it is how the gallery got entries nobody is."""
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.web.app import create_app
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    client = TestClient(create_app(review))
+
+    assert client.post("/api/rename", json={"old": "x", "new": "a, b"}).status_code == 400
+    assert client.post("/api/rename", json={"old": "nobody", "new": "who"}).status_code == 404

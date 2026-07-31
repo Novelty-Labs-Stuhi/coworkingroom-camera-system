@@ -41,19 +41,41 @@ class FaceGallery:
         return cls(references)
 
     def save(self, directory: Path) -> None:
+        """Write every name's vectors, and remove files for names that no longer exist.
+
+        Stale files go **first**, before anything is written. Writing first loses data on a
+        case-insensitive filesystem: correcting "yehor" to "Yehor" wrote Yehor.npy into what is
+        the same file, and the sweep then saw a directory entry still spelled yehor.npy, decided
+        that name was gone, and deleted the person entirely. Removing first cannot do that,
+        because by the time anything is written nothing stale is left to sweep.
+        """
         with self._lock:
             directory.mkdir(parents=True, exist_ok=True)
-            for name, vectors in self._references.items():
-                np.save(directory / f"{name}.npy", np.stack(vectors))
-            # A corrected label can empty a name out entirely; drop its file so a reload
-            # does not resurrect someone who no longer has any reference vectors.
+            # A corrected label can empty a name out entirely; drop its file so a reload does
+            # not resurrect someone who no longer has any reference vectors.
             for path in directory.glob("*.npy"):
                 if path.stem not in self._references:
                     path.unlink()
+            for name, vectors in self._references.items():
+                np.save(directory / f"{name}.npy", np.stack(vectors))
 
     def add(self, name: str, embedding: np.ndarray) -> None:
         with self._lock:
             self._references.setdefault(name, []).append(embedding)
+
+    def rename(self, old: str, new: str) -> int:
+        """Move every reference from one name to another, merging if the new name exists.
+
+        For a misspelling this is the only correct repair: the face vectors are right, only the
+        string is wrong. Re-labelling each sighting by hand would recompute nothing and risk
+        losing references. Returns how many moved; 0 if the old name is not there.
+        """
+        with self._lock:
+            vectors = self._references.pop(old, None)
+            if not vectors:
+                return 0
+            self._references.setdefault(new, []).extend(vectors)
+            return len(vectors)
 
     def discard(self, name: str, embedding: np.ndarray) -> bool:
         """Remove one reference vector from ``name``; used when a label is corrected."""

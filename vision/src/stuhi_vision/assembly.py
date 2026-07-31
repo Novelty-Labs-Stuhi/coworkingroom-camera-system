@@ -38,6 +38,7 @@ from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
 from .web import WebUI
+from .web.app import create_app
 from .witness import LeavingWitness
 from .zones import ZoneStore
 
@@ -159,10 +160,16 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     # cameras have been built.
     if config.web.enabled:
         web = WebUI(
-            review,
-            frames=frames,
-            zones=zones,
-            drift={camera.name: camera.drift for camera in cameras},
+            create_app(
+                review,
+                frames=frames,
+                zones=zones,
+                drift={camera.name: camera.drift for camera in cameras},
+                # So a corrected spelling reaches the history and whoever is inside now, not
+                # only the gallery: two spellings read as two half-present people.
+                history=store,
+                ledger=ledger,
+            ),
             host=config.web.host,
             port=config.web.port,
         )

@@ -59,11 +59,48 @@ function renderPeople(people) {
       const count = document.createElement('span');
       // The count is the honest check that a label added a reference rather than not.
       count.textContent = ` ${people[name]}`;
-      item.append(label, count);
+      // A misspelling is one mistake, so it is corrected once here rather than clip by clip.
+      // Relabelling each sighting by hand would discard and re-add every reference vector.
+      const fix = document.createElement('button');
+      fix.className = 'fix';
+      fix.type = 'button';
+      fix.textContent = 'rename';
+      fix.title = `correct the spelling of "${name}" everywhere it was used`;
+      fix.addEventListener('click', () => renameEverywhere(name, people[name]));
+      item.append(label, count, fix);
       return item;
     })
   );
   document.getElementById('people-empty').hidden = names.length > 0;
+}
+
+async function renameEverywhere(name, references) {
+  const corrected = window.prompt(
+    `Correct the spelling of "${name}" on all ${references} reference(s), `
+    + 'every clip labelled with it, and the recorded history.
+
+'
+    + 'Typing a name that already exists merges the two into one person.',
+    name
+  );
+  if (!corrected || corrected.trim() === name) return;
+
+  const response = await fetch('/api/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ old: name, new: corrected.trim() }),
+  });
+  const body = await response.json();
+  const note = document.getElementById('rename-result');
+  if (!response.ok) {
+    note.className = 'result bad';
+    note.textContent = body.detail || 'rename failed';
+    return;
+  }
+  note.className = 'result ok';
+  note.textContent = `Now "${body.renamed}": ${body.clips} clip(s) and `
+    + `${body.events} history entr(y/ies) corrected.`;
+  load();
 }
 
 function renderNames(names) {

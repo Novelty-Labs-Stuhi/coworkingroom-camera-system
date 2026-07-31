@@ -56,6 +56,18 @@ class EventStore:
             )
             self._conn.commit()
 
+    def rename(self, old: str, new: str) -> int:
+        """Correct a name throughout the history. Returns how many rows changed.
+
+        The store is otherwise append-only, and this is the one deliberate exception: a
+        misspelling was never a second person, and leaving both spellings in the record makes
+        one person look like two who each came and went half the time.
+        """
+        with self._lock:
+            cursor = self._conn.execute(_sql("rename_event_name.sql"), (new, old))
+            self._conn.commit()
+            return cursor.rowcount
+
     def recent(self, limit: int = 50) -> list[tuple[float, str, str, str]]:
         with self._lock:
             rows = self._conn.execute(_sql("recent_events.sql"), (limit,)).fetchall()
