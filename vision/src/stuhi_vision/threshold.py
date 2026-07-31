@@ -28,7 +28,7 @@ knocked camera degrades gradually instead of silently counting nothing.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .domain import Box, Crossing, Direction, Frame, TrackedPerson
@@ -129,6 +129,14 @@ class ThresholdMonitor:
         # refused passage is indistinguishable from one the tracker never saw, and the two
         # need entirely different fixes.
         self._report = report
+
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Judge against a different box from now on, without a restart.
+
+        A zone is redrawn because the camera moved, which means the count is wrong *now* --
+        waiting for a restart to apply it is most of the way to not being able to redraw it.
+        """
+        self._config = replace(self._config, zone=zone)
 
     def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
         """Feed one frame's tracked people; return crossings for tracks that just ended."""

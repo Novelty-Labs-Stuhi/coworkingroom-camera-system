@@ -237,9 +237,9 @@ def _add_zone_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> Non
             {
                 "camera": body.camera,
                 "zone": zone.as_tuple(),
-                # The running pipeline built its detector at startup, so it keeps the old
-                # zone until restarted. Saying so beats letting somebody assume otherwise.
-                "applies_after_restart": True,
+                # The running pipeline is told, so it judges against the new box from the
+                # next frame. Nothing to restart.
+                "applies_now": True,
             }
         )
 
@@ -255,7 +255,7 @@ def _add_zone_routes(app: FastAPI, frames, zones: ZoneStore, drift: dict) -> Non
         watch = drift.get(camera)
         if watch is not None:
             watch.forget()
-        return JSONResponse({"camera": camera, "zone": None, "applies_after_restart": True})
+        return JSONResponse({"camera": camera, "zone": None, "applies_now": True})
 
 
 def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:

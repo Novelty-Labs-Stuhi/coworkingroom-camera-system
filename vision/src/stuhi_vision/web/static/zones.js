@@ -200,10 +200,8 @@ async function store(section, camera, zone) {
     }
     delete section.dataset.drawing;   // the drawing is now the saved zone
     result.className = 'result ok';
-    // Being explicit: the running pipeline built its detector at startup, so it keeps the old
-    // zone until it restarts. Letting somebody assume otherwise would waste their time.
-    result.textContent = 'Saved, and this frame is now the reference. '
-      + 'It takes effect when the pipeline next restarts.';
+    result.textContent = 'Saved. This frame is now the reference, and the box is in use from '
+      + 'the next frame.';
   } catch (error) {
     result.className = 'result bad';
     result.textContent = String(error);
@@ -224,8 +222,8 @@ async function discard(section, camera) {
     section.dataset.saved = '';
     paint(section, null);
     result.className = 'result ok';
-    result.textContent = 'Removed. This camera falls back to the zone in the config file, '
-      + 'and its view is no longer watched for movement, from the next restart.';
+    result.textContent = 'Removed. This camera is back on the zone in the config file, and '
+      + 'its view is no longer watched for movement.';
   } catch (error) {
     result.className = 'result bad';
     result.textContent = String(error);

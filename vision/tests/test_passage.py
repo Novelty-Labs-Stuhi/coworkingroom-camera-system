@@ -200,3 +200,16 @@ def test_over_the_box_still_wins_over_merely_being_near_it() -> None:
     crossings = monitor.update([beside], _frame(timestamp=3.0))
 
     assert crossings[0].track_id == 1
+
+
+def test_a_redrawn_box_is_judged_against_immediately() -> None:
+    """Redrawing must not wait for a restart: it is done because the count is wrong now."""
+    monitor = _monitor({1: _coverage(lag=-0.8)})
+    monitor.use_zone((0.40, 0.0, 0.62, 1.0))
+
+    # Over the new box, nowhere near the old one.
+    over_new = _person(track_id=5, left=0.45, height=0.8)
+    monitor.update([over_new], _frame())
+    crossings = monitor.update([over_new], _frame(timestamp=2.0))
+
+    assert crossings[0].track_id == 5

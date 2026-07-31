@@ -221,6 +221,7 @@ def _build_camera(
     )
 
     monitor, attention = _monitor(entry, shared.zones)
+    _follow_zone(entry, shared.zones, monitor, attention)
     pipeline = Pipeline(
         source=source,
         tracker=GatedTracker(
@@ -262,6 +263,28 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
     return Doorkeeper(
         sessions, shared.ledger, min_age, camera=entry.name, witness=shared.witness
     )
+
+
+def _follow_zone(entry: CameraConfig, zones: ZoneStore, monitor, attention) -> None:
+    """Apply a redrawn zone to this running camera, rather than waiting for a restart.
+
+    A zone is redrawn because the camera moved, so the count is wrong *now*. Removing one
+    falls back to whatever the config says, which is the same path as never having drawn one.
+    """
+    if not isinstance(entry.detector, ThresholdConfig):
+        return
+    from_config = entry.detector.zone
+
+    def apply(camera: str, drawn) -> None:
+        if camera != entry.name:
+            return
+        zone = drawn.as_tuple() if drawn is not None else from_config
+        monitor.use_zone(zone)
+        if attention is not None:
+            attention.use_zone(zone)
+        _log.info("%s now judging the box %s", entry.name, [round(v, 3) for v in zone])
+
+    zones.watch(apply)
 
 
 def _persistence(entry: CameraConfig, thresholds) -> int:

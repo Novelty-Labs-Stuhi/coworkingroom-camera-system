@@ -78,3 +78,26 @@ def test_removing_a_zone_survives_a_reload(tmp_path) -> None:
 
 def test_removing_a_zone_that_was_never_drawn_says_so(tmp_path) -> None:
     assert ZoneStore(tmp_path).remove("door-in") is False
+
+
+def test_a_saved_zone_is_announced_so_a_running_camera_can_follow_it(tmp_path) -> None:
+    """A zone is redrawn because the camera moved, so the count is wrong now, not at restart."""
+    store = ZoneStore(tmp_path)
+    heard: list = []
+    store.watch(lambda camera, zone: heard.append((camera, zone)))
+
+    zone = DrawnZone.from_corners(0.0, 0.0, 0.2, 1.0)
+    store.save("door-in", zone)
+    assert heard == [("door-in", zone)]
+
+    store.remove("door-in")
+    assert heard[-1] == ("door-in", None)   # None: fall back to the config's zone
+
+
+def test_removing_a_zone_that_was_never_there_announces_nothing(tmp_path) -> None:
+    store = ZoneStore(tmp_path)
+    heard: list = []
+    store.watch(lambda camera, zone: heard.append((camera, zone)))
+
+    assert store.remove("door-in") is False
+    assert heard == []

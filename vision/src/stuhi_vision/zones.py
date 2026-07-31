@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 _FILE = "zones.json"
+
+# Told (camera, zone) when a zone is drawn, or (camera, None) when one is removed.
+Listener = Callable[[str, "DrawnZone | None"], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +59,15 @@ class ZoneStore:
         self._path = directory / _FILE
         self._lock = threading.RLock()
         self._zones: dict[str, DrawnZone] = {}
+        # Told when a zone changes, so a running pipeline can pick it up. Without this a
+        # redrawn zone waited for a restart, which is the same as not being able to redraw it:
+        # the reason to redraw is usually that the camera has moved and the count is wrong now.
+        self._listeners: list[Listener] = []
         self._load()
+
+    def watch(self, listener: Listener) -> None:
+        with self._lock:
+            self._listeners.append(listener)
 
     def reference_path(self, camera: str) -> Path:
         """Where the frame this camera's zone was drawn on lives."""
@@ -73,6 +85,11 @@ class ZoneStore:
         with self._lock:
             self._zones[camera] = zone
             self._write()
+            listeners = list(self._listeners)
+        # Outside the lock: a listener reaches into a running pipeline, and holding this lock
+        # while it does would tie the UI's thread to the camera's.
+        for listener in listeners:
+            listener(camera, zone)
 
     def remove(self, camera: str) -> bool:
         """Forget this camera's drawn zone, falling back to the config. False if it had none."""
@@ -80,7 +97,10 @@ class ZoneStore:
             if self._zones.pop(camera, None) is None:
                 return False
             self._write()
-            return True
+            listeners = list(self._listeners)
+        for listener in listeners:
+            listener(camera, None)
+        return True
 
     def _write(self) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)

@@ -28,7 +28,7 @@ rather than leaving a silent gap in the count.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .domain import Crossing, Direction, Frame, TrackedPerson
 from .occlusion import Coverage
@@ -77,6 +77,14 @@ class PassageMonitor:
         # id -> (frames actually over the box, frames merely near the door).
         self._standing: dict[int, int] = {}
         self._nearby: dict[int, int] = {}
+
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Judge against a different box from now on, without a restart.
+
+        A zone is redrawn because the camera moved, which means the count is wrong *now* --
+        waiting for a restart to apply it is most of the way to not being able to redraw it.
+        """
+        self._config = replace(self._config, zone=zone)
 
     def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
         """Feed one frame's tracked people; return a crossing when an episode just ended."""

@@ -107,6 +107,10 @@ class Attention:
             self._examined_until = fresh[-1].timestamp
         return fresh
 
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Watch a redrawn box. The kept approach is still valid: it is whole frames."""
+        self._occlusion.use_zone(zone)
+
     def episode(self) -> Coverage | None:
         """The coverage episode that finished on this frame, if one did."""
         return self._episode

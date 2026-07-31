@@ -107,6 +107,18 @@ class Occlusion:
         self._episode: _Episode | None = None
         self._covered = 0.0
 
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Watch a different part of the picture from now on.
+
+        The background is dropped rather than reshaped: it describes the old crop, and a
+        comparison against the wrong crop reads as everything having changed at once. A few
+        frames of an empty doorway rebuild it.
+        """
+        self._zone = zone
+        self._background = None
+        self._episode = None
+        self._covered = 0.0
+
     @property
     def covered(self) -> float:
         """The most recent reading: the fraction of the whole box that changed."""
