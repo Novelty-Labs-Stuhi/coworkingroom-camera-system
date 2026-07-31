@@ -168,3 +168,35 @@ def _settings():
     from stuhi_vision.occlusion import CoverageConfig
 
     return CoverageConfig(slices=4, covered=0.2, min_frames=2)
+
+
+def test_a_person_at_the_door_counts_even_if_the_overlap_frame_was_missed() -> None:
+    """A twelfth-of-a-frame box is overlapped for a frame or two; detection may miss those.
+
+    From the live log: the doorframe was plainly covered -- five slices, peak 0.78, a clear
+    order -- and the passage was thrown away as "nobody detected", because no detected box
+    happened to overlap the strip on the frames the detector managed.
+    """
+    watched: list = []
+    monitor = _monitor({2: _coverage(lag=-0.8)}, watched)
+
+    # Tall enough to be at this door, but never over the narrow box itself.
+    beside = _person(track_id=9, left=0.30, height=0.8)
+    monitor.update([beside], _frame())
+    monitor.update([beside], _frame(timestamp=2.0))
+    crossings = monitor.update([beside], _frame(timestamp=3.0))
+
+    assert [crossing.direction for crossing in crossings] == [Direction.IN]
+    assert crossings[0].track_id == 9
+
+
+def test_over_the_box_still_wins_over_merely_being_near_it() -> None:
+    monitor = _monitor({2: _coverage(lag=-0.8)})
+
+    over = _person(track_id=1, left=0.0, height=0.8)
+    beside = _person(track_id=2, left=0.30, height=0.8)
+    monitor.update([over, beside], _frame())
+    monitor.update([beside], _frame(timestamp=2.0))
+    crossings = monitor.update([beside], _frame(timestamp=3.0))
+
+    assert crossings[0].track_id == 1

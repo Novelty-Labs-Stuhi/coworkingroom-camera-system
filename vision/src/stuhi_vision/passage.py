@@ -73,8 +73,10 @@ class PassageMonitor:
         self._config = config
         self._episodes = episodes
         self._watcher = watcher
-        # People seen standing on the box during the episode now running: id -> frames there.
+        # Everybody the detector saw while it was awake for the episode now running:
+        # id -> (frames actually over the box, frames merely near the door).
         self._standing: dict[int, int] = {}
+        self._nearby: dict[int, int] = {}
 
     def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
         """Feed one frame's tracked people; return a crossing when an episode just ended."""
@@ -87,6 +89,7 @@ class PassageMonitor:
 
         passage = self._judge(episode)
         self._standing = {}
+        self._nearby = {}
         if self._watcher is not None:
             self._watcher(passage)
         if passage.direction is None or passage.person is None:
@@ -100,17 +103,38 @@ class PassageMonitor:
         ]
 
     def _note(self, people: Iterable[TrackedPerson], width: int, height: int) -> None:
-        """Count frames each detected person spent on the box."""
+        """Count the frames each detected person spent over the box, and near the door.
+
+        Both, because a drawn box can be a narrow strip -- the live one is a twelfth of the
+        frame -- and a person overlaps a strip that narrow for only a frame or two. Requiring
+        the overlap to be caught meant real passages went uncounted as "nobody detected" while
+        the pixels showed the doorframe plainly covered.
+        """
         for person in people:
             shape = relative(person.box, width, height)
             if shape.height < self._config.min_height:
                 continue  # too small to be at this door; somebody across the room
+            self._nearby[person.track_id] = self._nearby.get(person.track_id, 0) + 1
             if overlaps(shape, self._config.zone):
                 self._standing[person.track_id] = self._standing.get(person.track_id, 0) + 1
 
     def _judge(self, episode: Coverage) -> Passage:
-        person = max(self._standing, key=self._standing.get, default=None)
-        return Passage(coverage=episode, person=person, direction=self._direction(episode))
+        return Passage(
+            coverage=episode, person=self._who(), direction=self._direction(episode)
+        )
+
+    def _who(self) -> int | None:
+        """Whose passage this was: over the box for preference, else close enough to the door.
+
+        The fallback still requires a *detected person*, standing tall enough in frame to be at
+        this door -- so a swinging door with nobody about is still never counted. What it drops
+        is the demand that the one frame where they overlap a narrow strip was also a frame the
+        detector managed.
+        """
+        for seen in (self._standing, self._nearby):
+            if seen:
+                return max(seen, key=seen.get)
+        return None
 
     def _direction(self, episode: Coverage) -> Direction | None:
         """The order the slices lit, read against which side of the frame the doorway is on.
