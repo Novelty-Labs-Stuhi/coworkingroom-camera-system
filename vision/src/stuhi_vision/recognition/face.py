@@ -23,10 +23,21 @@ _DET_SIZE = (480, 480)  # detector input; smaller is faster and enough for close
 
 @dataclass(frozen=True, slots=True)
 class FaceObservation:
-    """One detected face in a crop: its embedding and how clear/usable it is."""
+    """One detected face in a crop: its embedding, how clear it is, and where it sits."""
 
     embedding: np.ndarray
     clarity: float  # 0..1, combines detection score, face size, and frontality
+    # Where the face is, in the *frame's* coordinates. Kept so the still somebody labels from
+    # can be the face rather than the whole person: at this doorway a person box is mostly
+    # torso, and a face a few dozen pixels across inside it is not something you can put a
+    # name to. The detector already knows this box; it used to be thrown away.
+    box: Box | None = None
+
+
+def _in_frame(bbox, person: Box) -> Box:
+    """A face box measured inside the person crop, expressed in the whole frame."""
+    x1, y1, x2, y2 = (float(value) for value in bbox[:4])
+    return Box(person.x1 + x1, person.y1 + y1, person.x1 + x2, person.y1 + y2)
 
 
 class FaceRecognizer:
@@ -67,7 +78,9 @@ class FaceRecognizer:
         best = max(faces, key=lambda f: f.det_score)
         embedding = normalize(np.asarray(best.embedding, dtype=np.float32))
         clarity = _clarity(best, crop.shape[0])
-        return FaceObservation(embedding=embedding, clarity=clarity)
+        return FaceObservation(
+            embedding=embedding, clarity=clarity, box=_in_frame(best.bbox, box)
+        )
 
     def match(self, embedding: np.ndarray) -> Match | None:
         """Match a face embedding against the gallery (or ``None`` if unknown)."""

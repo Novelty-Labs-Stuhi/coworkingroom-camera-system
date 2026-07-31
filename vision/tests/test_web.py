@@ -203,3 +203,67 @@ def test_renaming_refuses_a_list_of_names(tmp_path) -> None:
 
     assert client.post("/api/rename", json={"old": "x", "new": "a, b"}).status_code == 400
     assert client.post("/api/rename", json={"old": "nobody", "new": "who"}).status_code == 404
+
+
+def test_a_group_carries_its_faces_in_crossing_order(tmp_path) -> None:
+    """The order is the whole basis of a group label, so it must be checkable against pictures."""
+    import numpy as np
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.web.app import create_app
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+
+    def crossed(position: int) -> str:
+        return review.record(
+            Sighting(
+                timestamp=1_760_000_000.0 + position,
+                direction=Direction.IN,
+                name=None,
+                score=0.2,
+                outcome=Outcome.UNKNOWN,
+                face_embedding=np.array([1.0, 0.0, 0.0]),
+                face_crop=None,
+            ),
+            position=position,
+            burst=7,
+        )
+
+    third, first, second = crossed(3), crossed(1), crossed(2)   # recorded out of order
+
+    pending = TestClient(create_app(review)).get("/api/sightings").json()["pending"]
+    by_id = {entry["id"]: entry for entry in pending}
+
+    assert by_id[first]["group_ids"] == [first, second, third]
+    assert by_id[third]["group_size"] == 3
+    assert by_id[third]["position"] == 3
+
+
+def test_a_lone_crossing_carries_no_group(tmp_path) -> None:
+    import numpy as np
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.web.app import create_app
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    review.record(
+        Sighting(
+            timestamp=1.0,
+            direction=Direction.IN,
+            name=None,
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=None,
+        ),
+        position=1,
+        burst=3,
+    )
+
+    entry = TestClient(create_app(review)).get("/api/sightings").json()["pending"][0]
+    assert entry["group_ids"] == []
+    assert entry["group_size"] == 1

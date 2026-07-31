@@ -158,6 +158,15 @@ img.face {
   object-fit: contain;
 }
 
+/* The others who came through with this person, in crossing order. Small: they are context
+   for checking the order, not the picture being labelled. */
+.together { display: flex; gap: .3rem; margin: .4rem 0 0; overflow-x: auto; }
+.together .mate { margin: 0; flex: 0 0 auto; width: 3.4rem; text-align: center; }
+.together .mate img { width: 100%; border-radius: 4px; display: block; opacity: .55; }
+.together .mate figcaption { font-size: .7rem; color: var(--muted); }
+.together .is-this-one img { opacity: 1; outline: 2px solid var(--accent); }
+.together .is-this-one figcaption { color: var(--accent); font-weight: 600; }
+
 details.clip { margin-top: .4rem; }
 details.clip summary {
   cursor: pointer;

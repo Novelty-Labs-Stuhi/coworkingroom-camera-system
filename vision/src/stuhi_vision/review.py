@@ -245,6 +245,23 @@ class ReviewQueue:
                     sizes[record.burst] = sizes.get(record.burst, 0) + 1
         return sizes
 
+    def groups(self) -> dict[int, list[str]]:
+        """Each burst's sightings, in crossing order.
+
+        The order is what a group label depends on -- "a, b, c" means the first, second and
+        third to cross -- so the page can show every face in that order and let somebody check
+        it against the pictures rather than take it on trust.
+        """
+        members: dict[int, list[ReviewRecord]] = {}
+        with self._lock:
+            for record in self._records.values():
+                if record.burst:
+                    members.setdefault(record.burst, []).append(record)
+        return {
+            burst: [record.sighting_id for record in sorted(found, key=lambda r: r.position)]
+            for burst, found in members.items()
+        }
+
     def dismiss(self, sighting_id: str) -> LabelOutcome:
         """Mark a sighting unusable, removing any reference it contributed.
 

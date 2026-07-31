@@ -153,12 +153,13 @@ function updateCard(article, record) {
     record.outcome === 'unidentified' ? 'no face seen' : `score ${record.score}`;
   setCurrent(article.querySelector('.current'), record);
 
-  // A group label was assigned by crossing order, so say so -- it is the case most likely
-  // to carry the right names on the wrong people.
+  // A group label is assigned by crossing order, so say so -- it is the case most likely to
+  // carry the right names on the wrong people.
   const group = article.querySelector('.group');
   const grouped = record.group_size > 1;
   group.hidden = !grouped;
   if (grouped) group.textContent = `${record.position} of ${record.group_size} together`;
+  showTogether(article, record);
 
   const why = article.querySelector('.why');
   why.hidden = !record.reason;
@@ -169,6 +170,39 @@ function updateCard(article, record) {
   const input = article.querySelector('.name');
   // Never overwrite what someone is in the middle of typing.
   if (record.labelled_as && document.activeElement !== input) input.value = record.labelled_as;
+}
+
+// Everybody who came through with this person, in the order they crossed. Shown because that
+// order is the whole basis of a group label: seeing the faces in it turns "trust the numbering"
+// into something checkable. One name still labels only this card; a comma-separated list
+// labels the group in this order.
+function showTogether(article, record) {
+  const strip = article.querySelector('.together');
+  const input = article.querySelector('.name');
+  if (record.group_size < 2) {
+    strip.replaceChildren();
+    strip.hidden = true;
+    input.placeholder = 'name';
+    return;
+  }
+  strip.hidden = false;
+  input.placeholder = `name, or ${record.group_size} names in this order`;
+  if (strip.children.length === record.group_ids.length) return;   // already drawn
+
+  strip.replaceChildren(
+    ...record.group_ids.map((id, index) => {
+      const figure = document.createElement('figure');
+      figure.className = id === record.id ? 'mate is-this-one' : 'mate';
+      const face = document.createElement('img');
+      face.src = `/media/${id}.jpg`;
+      face.alt = `person ${index + 1} of this group`;
+      face.addEventListener('error', () => face.remove());
+      const caption = document.createElement('figcaption');
+      caption.textContent = index + 1;
+      figure.append(face, caption);
+      return figure;
+    })
+  );
 }
 
 function setCurrent(current, record) {

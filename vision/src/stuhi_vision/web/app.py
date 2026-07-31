@@ -69,8 +69,9 @@ class ZoneRequest(BaseModel):
     y2: float
 
 
-def _as_dict(record, groups: dict[int, int] | None = None) -> dict:
-    size = (groups or {}).get(record.burst, 1)
+def _as_dict(record, groups: dict[int, list[str]] | None = None) -> dict:
+    together = (groups or {}).get(record.burst, [])
+    size = len(together) or 1
     return {
         "id": record.sighting_id,
         "direction": record.direction,
@@ -83,12 +84,15 @@ def _as_dict(record, groups: dict[int, int] | None = None) -> dict:
         # check rather than trust it.
         "position": record.position,
         "group_size": size,
+        # Every face in this group, in crossing order, so the order a group label depends on
+        # can be checked against the pictures instead of taken on trust.
+        "group_ids": together if size > 1 else [],
     }
 
 
 def _suspect_dicts(review: ReviewQueue, report) -> list[dict]:
     """Pair each suspect reference with its sighting, so the UI can show the clip."""
-    groups = review.group_sizes()
+    groups = review.groups()
     entries = []
     for suspect in report.suspects:
         record = review.get(suspect.sighting_id)
@@ -141,7 +145,7 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/api/sightings")
     def sightings() -> JSONResponse:
-        groups = review.group_sizes()
+        groups = review.groups()
         return JSONResponse(
             {
                 "pending": [_as_dict(r, groups) for r in review.pending(limit=50)],

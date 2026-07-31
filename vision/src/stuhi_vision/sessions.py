@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .domain import Frame, TrackedPerson
+from .domain import Box, Frame, TrackedPerson
 from .identity import RunningIdentity
 from .quality import laplacian_sharpness
 from .recognition.body import BodyEmbedder
@@ -145,8 +145,29 @@ class SessionManager:
         # This frame is the best look at the face so far -- keep everything from it.
         session.best_face_clarity = observation.clarity
         session.face_embedding = observation.embedding
-        session.face_crop = person.box.crop(frame.image).copy()
+        session.face_crop = _portrait(frame.image, observation.box or person.box)
         session.entry_embedding = self._bodies.embed(frame.image, person.box)
+
+
+def _portrait(image, box: Box):
+    """The face with room around it: what somebody labels from.
+
+    The whole person box was kept before, and at this doorway that is mostly torso -- a face a
+    few dozen pixels across inside a body-sized picture is not something you can put a name to.
+    Padding is generous rather than tight: a face cropped to its own edges loses the hair, ears
+    and jaw, which is much of what a person is recognised by, and a mis-detected box would cut
+    the face in half.
+    """
+    padding = 0.6
+    width, height = box.x2 - box.x1, box.y2 - box.y1
+    grown = Box(
+        box.x1 - width * padding,
+        box.y1 - height * padding,
+        box.x2 + width * padding,
+        box.y2 + height * padding,
+    )
+    crop = grown.crop(image)
+    return crop.copy() if crop.size else box.crop(image).copy()
 
 
 def _too_small(frame: Frame, person: TrackedPerson) -> bool:
