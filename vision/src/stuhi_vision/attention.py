@@ -27,8 +27,16 @@ from collections import deque
 from .domain import Frame
 from .occlusion import Coverage, Occlusion
 
-_PRE_ROLL = 15   # frames of approach kept: about three seconds at this camera's rate
-_LINGER = 8      # frames to keep looking after the box clears, so a track ends cleanly
+# How much of the approach is kept, in *seconds*. A frame count silently changes meaning when
+# the frame rate does: fifteen frames was three seconds when the pipeline could only consume
+# five a second, and became one second the moment it could keep up with the camera at sixteen.
+_PRE_ROLL_SECONDS = 2.0
+# ...but bounded by a frame count too, because the cost of waking is paid in frames: each one
+# replayed costs a detection, about 200 ms here. Two seconds at sixteen frames a second is
+# thirty-two frames, so this cap only bites if a camera runs much faster than that.
+_MOST_FRAMES = 40
+# Kept looking at, after the box clears, so a track ends on its own rather than mid-stride.
+_LINGER_SECONDS = 0.7
 
 
 class Attention:
@@ -37,13 +45,15 @@ class Attention:
     def __init__(
         self,
         occlusion: Occlusion,
-        pre_roll: int = _PRE_ROLL,
-        linger: int = _LINGER,
+        pre_roll_seconds: float = _PRE_ROLL_SECONDS,
+        linger_seconds: float = _LINGER_SECONDS,
+        most_frames: int = _MOST_FRAMES,
     ) -> None:
         self._occlusion = occlusion
-        self._recent: deque[Frame] = deque(maxlen=max(pre_roll, 1))
-        self._linger = max(linger, 0)
-        self._left = 0
+        self._pre_roll = max(pre_roll_seconds, 0.0)
+        self._linger = max(linger_seconds, 0.0)
+        self._recent: deque[Frame] = deque(maxlen=max(most_frames, 1))
+        self._quiet_since: float | None = None
         self._was_busy = False
         self._episode: Coverage | None = None
 
@@ -53,24 +63,34 @@ class Attention:
         busy = self._occlusion.busy
 
         if busy and not self._was_busy:
-            waking = [*self._recent, frame]     # the approach, then now
+            waking = [*self._approach(frame.timestamp), frame]
             self._recent.clear()
             self._was_busy = True
-            self._left = self._linger
+            self._quiet_since = None
             return waking
 
-        self._was_busy = busy
         if busy:
-            self._left = self._linger
-            return [frame]
-        if self._left > 0:
-            # Keep watching briefly after the box clears: the track has to end on its own
-            # rather than be cut off mid-stride, and the exit walk is still worth seeing.
-            self._left -= 1
+            self._was_busy = True
+            self._quiet_since = None
             return [frame]
 
+        if self._was_busy:
+            # Just cleared. The linger is measured from here -- not from startup, which would
+            # have the models running before anything had ever happened.
+            self._quiet_since = frame.timestamp
+            self._was_busy = False
+        if self._quiet_since is not None and frame.timestamp - self._quiet_since <= self._linger:
+            # Keep watching briefly after the box clears: the track has to end on its own
+            # rather than be cut off mid-stride, and the walk away is still worth seeing.
+            return [frame]
+
+        self._quiet_since = None
         self._recent.append(frame)
         return []
+
+    def _approach(self, now: float) -> list[Frame]:
+        """The kept frames from within the pre-roll of this moment, oldest first."""
+        return [frame for frame in self._recent if now - frame.timestamp <= self._pre_roll]
 
     def episode(self) -> Coverage | None:
         """The coverage episode that finished on this frame, if one did."""

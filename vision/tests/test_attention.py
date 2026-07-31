@@ -21,13 +21,19 @@ class Doorframe:
         return self.episodes.pop(0) if self.episodes else None
 
 
+# A tenth of a second apart, so a pre-roll in seconds maps to a countable number of frames.
+INTERVAL = 0.1
+
+
 def _frame(index: int) -> Frame:
-    return Frame(timestamp=float(index), image=np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8))
+    return Frame(
+        timestamp=index * INTERVAL, image=np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+    )
 
 
 def test_nothing_is_examined_while_the_doorframe_is_clear() -> None:
     door = Doorframe()
-    attention = Attention(door, pre_roll=4, linger=2)
+    attention = Attention(door, pre_roll_seconds=0.4, linger_seconds=0.2)
 
     assert [attention.examine(_frame(i)) for i in range(6)] == [[], [], [], [], [], []]
 
@@ -39,7 +45,9 @@ def test_waking_up_replays_the_approach_first() -> None:
     side-on or past it -- and every passage would be counted and nobody named.
     """
     door = Doorframe()
-    attention = Attention(door, pre_roll=4, linger=0)
+    # Not a whole number of frames: a real pre-roll never lands exactly on a frame boundary,
+    # and a test that does is testing floating point rather than behaviour.
+    attention = Attention(door, pre_roll_seconds=0.45, linger_seconds=0.0)
 
     for index in range(6):        # an empty corridor: nothing examined, frames kept
         assert attention.examine(_frame(index)) == []
@@ -47,13 +55,13 @@ def test_waking_up_replays_the_approach_first() -> None:
     door.busy = True
     examined = attention.examine(_frame(6))
 
-    # The last four approach frames, oldest first, then the frame that woke it.
-    assert [frame.timestamp for frame in examined] == [2.0, 3.0, 4.0, 5.0, 6.0]
+    # The last 0.45 s of approach, oldest first, then the frame that woke it.
+    assert [round(frame.timestamp, 2) for frame in examined] == [0.2, 0.3, 0.4, 0.5, 0.6]
 
 
 def test_the_approach_is_replayed_once_not_every_frame() -> None:
     door = Doorframe()
-    attention = Attention(door, pre_roll=4, linger=0)
+    attention = Attention(door, pre_roll_seconds=0.4, linger_seconds=0.0)
     for index in range(5):
         attention.examine(_frame(index))
 
@@ -61,29 +69,40 @@ def test_the_approach_is_replayed_once_not_every_frame() -> None:
     attention.examine(_frame(5))
     again = attention.examine(_frame(6))
 
-    assert [frame.timestamp for frame in again] == [6.0]
+    assert [round(frame.timestamp, 2) for frame in again] == [0.6]
 
 
 def test_it_keeps_looking_briefly_after_the_doorframe_clears() -> None:
     """A track has to end on its own; cutting it off mid-stride loses the departure."""
     door = Doorframe()
-    attention = Attention(door, pre_roll=2, linger=2)
+    attention = Attention(door, pre_roll_seconds=0.2, linger_seconds=0.2)
     door.busy = True
     attention.examine(_frame(0))
 
     door.busy = False
-    assert [f.timestamp for f in attention.examine(_frame(1))] == [1.0]
-    assert [f.timestamp for f in attention.examine(_frame(2))] == [2.0]
-    assert attention.examine(_frame(3)) == []
+    assert [round(f.timestamp, 2) for f in attention.examine(_frame(1))] == [0.1]
+    assert [round(f.timestamp, 2) for f in attention.examine(_frame(2))] == [0.2]
+    assert attention.examine(_frame(4)) == []
 
 
-def test_the_buffer_holds_only_the_recent_approach() -> None:
+def test_only_the_recent_approach_is_replayed_however_long_it_was_quiet() -> None:
     door = Doorframe()
-    attention = Attention(door, pre_roll=3, linger=0)
+    attention = Attention(door, pre_roll_seconds=0.35, linger_seconds=0.0)
     for index in range(50):
         attention.examine(_frame(index))
 
     door.busy = True
     examined = attention.examine(_frame(50))
 
-    assert [frame.timestamp for frame in examined] == [47.0, 48.0, 49.0, 50.0]
+    assert [round(frame.timestamp, 2) for frame in examined] == [4.7, 4.8, 4.9, 5.0]
+
+
+def test_the_kept_approach_is_bounded_by_frames_as_well_as_seconds() -> None:
+    """Waking costs a detection per replayed frame, so a fast camera must not run away."""
+    door = Doorframe()
+    attention = Attention(door, pre_roll_seconds=60.0, linger_seconds=0.0, most_frames=5)
+    for index in range(50):
+        attention.examine(_frame(index))
+
+    door.busy = True
+    assert len(attention.examine(_frame(50))) == 6   # five kept, plus the waking frame
