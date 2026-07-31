@@ -9,9 +9,13 @@ from stuhi_vision.recognition.gallery import FaceGallery
 from stuhi_vision.review import LabelOutcome, ReviewQueue
 
 
-def _sighting(embedding: np.ndarray | None = None, **overrides) -> Sighting:
+def _sighting(
+    embedding: np.ndarray | None = None,
+    timestamp: float = 1_760_000_000.0,
+    **overrides,
+) -> Sighting:
     defaults = {
-        "timestamp": 1_760_000_000.0,
+        "timestamp": timestamp,
         "direction": Direction.IN,
         "name": None,
         "score": 0.21,
@@ -250,3 +254,30 @@ def test_renaming_a_name_nobody_has_changes_nothing(tmp_path) -> None:
     review, _ = _queue(tmp_path)
     assert review.rename("nobody", "somebody") == 0
     assert review.rename("same", "same") == 0
+
+
+def test_regrouping_rebuilds_groups_from_the_gaps_between_crossings(tmp_path) -> None:
+    """The recorded groups were wrong; the timestamps were not."""
+    review, _ = _queue(tmp_path)
+    together = [review.record(_sighting(), position=index, burst=1) for index in (1, 2)]
+    later = review.record(
+        _sighting(timestamp=1_760_000_400.0), position=3, burst=1  # minutes later
+    )
+
+    changed = review.regroup(gap_seconds=3.0)
+
+    groups = review.groups()
+    assert changed >= 1
+    assert sorted(groups[1]) == sorted(together)   # the two that really were together
+    assert groups[2] == [later]                    # the straggler is its own group
+    assert review.get(later).position == 1
+
+
+def test_regrouping_is_recorded_so_it_survives_a_reload(tmp_path) -> None:
+    review, _ = _queue(tmp_path)
+    review.record(_sighting(), position=1, burst=1)
+    review.record(_sighting(timestamp=1_760_000_900.0), position=2, burst=1)
+    review.regroup(gap_seconds=3.0)
+
+    reloaded = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    assert len(reloaded.groups()) == 2

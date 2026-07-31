@@ -245,6 +245,39 @@ class ReviewQueue:
                     sizes[record.burst] = sizes.get(record.burst, 0) + 1
         return sizes
 
+    def regroup(self, gap_seconds: float = 3.0) -> int:
+        """Recompute which sightings were a group, from the gaps between their timestamps.
+
+        The recorded groups were assigned by a rule that ended a burst only when every clip
+        had finished, and a clip's completion counter resets whenever anybody is in view -- so
+        in an occupied room every crossing joined the same group. The queue still holds groups
+        of forty-four, offering forty-four names in crossing order for passages minutes apart.
+
+        The fix to the live rule cannot repair those, so this recomputes them from the one
+        thing that was recorded honestly: when each crossing happened. Returns how many
+        records changed group.
+        """
+        with self._lock:
+            in_order = sorted(self._records.values(), key=lambda record: record.timestamp)
+            changed = 0
+            burst = 0
+            position = 0
+            previous: float | None = None
+            for record in in_order:
+                if previous is None or record.timestamp - previous > gap_seconds:
+                    burst += 1
+                    position = 0
+                previous = record.timestamp
+                position += 1
+                if record.burst == burst and record.position == position:
+                    continue
+                self._records[record.sighting_id] = ReviewRecord(
+                    **{**asdict(record), "burst": burst, "position": position}
+                )
+                changed += 1
+            self._flush()
+            return changed
+
     def groups(self) -> dict[int, list[str]]:
         """Each burst's sightings, in crossing order.
 
