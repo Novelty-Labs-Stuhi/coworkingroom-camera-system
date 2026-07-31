@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import numpy as np
 from dataclasses import asdict
+
+import numpy as np
 
 from stuhi_vision.domain import Direction, Outcome, Sighting
 from stuhi_vision.recognition.gallery import FaceGallery
@@ -294,7 +295,7 @@ def test_a_saved_label_never_returns_to_worth_rechecking(tmp_path) -> None:
 
 
 def test_a_name_used_once_is_worth_rechecking_until_somebody_saves_it(tmp_path) -> None:
-    review, gallery = _queue(tmp_path)
+    review, _ = _queue(tmp_path)
     typo = review.record(_sighting())
     review.label(typo, "ilar")
     # Undo the "checked" mark the way an import or an older record would look.
