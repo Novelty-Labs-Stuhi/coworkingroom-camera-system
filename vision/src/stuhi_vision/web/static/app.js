@@ -19,15 +19,18 @@ async function loadSightings() {
     ['recheck', data.recheck],
     ['labelled', data.labelled],
   ]) {
-    renderCards(section, records);
+    const shown = records.filter(about);
+    renderCards(section, shown);
     const count = document.getElementById(`${section}-count`);
-    if (count) count.textContent = records.length ? `(${records.length})` : '';
+    if (count) count.textContent = shown.length ? `(${shown.length})` : '';
   }
   await loadAudit();
 }
 
 // Offered by the arrow beside each name box, in the order the names were last used.
 let recentNames = [];
+// When a person is picked from Enrolled, every pile narrows to them. Null shows everybody.
+let onlyPerson = null;
 
 // The audit is a separate call because it reads every enrolled embedding off disk, which
 // is far heavier than listing records -- no reason to pay for it on every poll of the list.
@@ -45,8 +48,16 @@ function renderThin(thin) {
   list.replaceChildren(
     ...names.map((name) => {
       const item = document.createElement('li');
-      const label = document.createElement('b');
+      if (name === onlyPerson) item.classList.add('chosen');
+      // The name itself is the control: picking somebody narrows every pile to them, which
+      // is how you check one person's faces against each other rather than hunting for them
+      // among everybody else's.
+      const label = document.createElement('button');
+      label.type = 'button';
+      label.className = 'who';
       label.textContent = name;
+      label.title = `show everything labelled or guessed as "${name}"`;
+      label.addEventListener('click', () => showOnly(name));
       const count = document.createElement('span');
       count.textContent = ` ${thin[name]} face${thin[name] === 1 ? '' : 's'}`;
       item.append(label, count);
@@ -62,8 +73,16 @@ function renderPeople(people) {
   list.replaceChildren(
     ...names.map((name) => {
       const item = document.createElement('li');
-      const label = document.createElement('b');
+      if (name === onlyPerson) item.classList.add('chosen');
+      // The name itself is the control: picking somebody narrows every pile to them, which
+      // is how you check one person's faces against each other rather than hunting for them
+      // among everybody else's.
+      const label = document.createElement('button');
+      label.type = 'button';
+      label.className = 'who';
       label.textContent = name;
+      label.title = `show everything labelled or guessed as "${name}"`;
+      label.addEventListener('click', () => showOnly(name));
       const count = document.createElement('span');
       // The count is the honest check that a label added a reference rather than not.
       count.textContent = ` ${people[name]}`;

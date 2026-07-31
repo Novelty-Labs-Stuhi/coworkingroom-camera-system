@@ -38,6 +38,20 @@ section { margin-bottom: 2.5rem; }
   font-size: .9rem;
 }
 .people b { font-weight: 600; }
+/* The name is a control, but it must still read as the name -- so it keeps the chip's own
+   look rather than a button's. */
+.people .who {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.people .who:hover { color: var(--accent); filter: none; }
+.people li.chosen { border-color: var(--accent); }
+.people li.chosen .who { color: var(--accent); }
 /* Small and quiet: renaming is occasional, and it must not compete with labelling. */
 .people .fix {
   margin-left: .5rem;
