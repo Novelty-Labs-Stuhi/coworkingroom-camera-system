@@ -44,7 +44,11 @@ class Doorkeeper:
         """Apply a crossing; returns the sighting, or ``None`` if it was rejected."""
         session = self._sessions.pop(crossing.track_id)
         if session is None or session.age < self._min_track_age:
-            return None  # flicker / not a confident person pass-through
+            # Said out loud, because a rejection here is indistinguishable in the record from
+            # a passage that was never recognised at all, and the two need different fixes.
+            seen = "no session" if session is None else f"seen {session.age} frames"
+            print(f"  -> {self._camera} crossing not counted: track {crossing.track_id}, {seen}")
+            return None
 
         decision = session.identity.decide()
         if crossing.direction is Direction.IN:
