@@ -107,3 +107,24 @@ def test_an_unknown_sighting_is_a_404(setup) -> None:
 def test_missing_media_is_a_404(setup) -> None:
     client, _review, _gallery, sighting_id = setup
     assert client.get(f"/media/{sighting_id}.mp4").status_code == 404
+
+
+def test_the_camera_state_says_how_old_its_picture_is(tmp_path) -> None:
+    """"Current view" is a claim, so the page is given the number to back it up."""
+    import numpy as np
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.latest import LatestFrames
+    from stuhi_vision.web.app import create_app
+    from stuhi_vision.zones import ZoneStore
+
+    frames = LatestFrames(lambda image: b"jpeg-bytes")
+    frames.put("door-in", np.zeros((4, 4, 3), dtype=np.uint8))
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    client = TestClient(create_app(review, frames=frames, zones=ZoneStore(tmp_path)))
+    state = client.get("/api/cameras").json()["cameras"][0]
+
+    assert state["name"] == "door-in"
+    assert 0.0 <= state["frame_age"] < 5.0
+    assert client.get("/frame/door-in.jpg").content == b"jpeg-bytes"

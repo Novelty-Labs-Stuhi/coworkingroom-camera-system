@@ -47,12 +47,22 @@ class BufferedSource:
     seconds of backlog.
     """
 
-    def __init__(self, source: FrameSource, capacity: int = 64, name: str = "") -> None:
+    def __init__(
+        self,
+        source: FrameSource,
+        capacity: int = 64,
+        name: str = "",
+        on_read=None,
+    ) -> None:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         self._source = source
         self._name = name
         self._queue: queue.Queue = queue.Queue(maxsize=capacity)
+        # Told about each frame the moment it arrives, before it joins the backlog. Anything
+        # wanting the *current* view has to be fed from here: by the time a frame reaches the
+        # far end of the pipeline it can be twenty seconds old.
+        self._on_read = on_read
         self._stop = threading.Event()
         self._high_water = 0
         # What the camera actually delivers, as opposed to what the models keep up with. The
@@ -91,6 +101,8 @@ class BufferedSource:
                 if self._stop.is_set():
                     return
                 self._count()
+                if self._on_read is not None:
+                    self._on_read(frame)
                 self._offer(frame)
         finally:
             self._queue.put(_SENTINEL)

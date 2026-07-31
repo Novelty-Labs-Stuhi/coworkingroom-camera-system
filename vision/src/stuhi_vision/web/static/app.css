@@ -179,6 +179,7 @@ details.clip video { width: 100%; margin-top: .4rem; border-radius: 6px; }
 .state { margin: .1rem 0 .5rem; font-size: .85rem; color: var(--muted); }
 .state.ok { color: var(--ok); }
 .state.bad { color: #f0776a; }
+.age { margin: .35rem 0 0; font-size: .78rem; color: var(--muted); }
 .numbers { margin: .4rem 0; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .actions { display: flex; gap: .5rem; }
 .actions .refresh,

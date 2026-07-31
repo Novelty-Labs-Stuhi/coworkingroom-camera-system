@@ -66,3 +66,19 @@ def test_the_rate_report_says_how_deep_the_backlog_got(caplog) -> None:
     assert "door-in delivering" in printed
     assert "backlog peaked" in printed
     assert "/4" in printed
+
+
+def test_each_frame_is_offered_as_it_is_read() -> None:
+    """The reader is the only place a *current* frame exists.
+
+    It banks hundreds of frames so a slow machine loses nothing, so by the time one reaches the
+    far end of the pipeline it can be twenty seconds old. A page showing "the current view" has
+    to be fed from here.
+    """
+    seen: list[float] = []
+    source = BufferedSource(_frames(6), capacity=2, on_read=lambda f: seen.append(f.timestamp))
+
+    received = [frame.timestamp for frame in source]
+
+    assert seen == [float(index) for index in range(6)]
+    assert received == seen   # same frames, in the same order, just later

@@ -168,6 +168,7 @@ def _camera_states(frames, zones: ZoneStore, drift: dict) -> list[dict]:
     """Each camera's drawn zone and whether its view has shifted since that was drawn."""
     listed = []
     for name in frames.cameras:
+        age = frames.age(name)
         watch = drift.get(name)
         reading = watch.latest if watch else None
         zone = zones.get(name)
@@ -175,6 +176,10 @@ def _camera_states(frames, zones: ZoneStore, drift: dict) -> list[dict]:
             {
                 "name": name,
                 "zone": zone.as_tuple() if zone else None,
+                # How old the picture on the page is. Stated rather than implied, because the
+                # reader banks hundreds of frames and "the latest frame" has meant two very
+                # different things depending on which end of the pipeline it came from.
+                "frame_age": round(age, 1) if age is not None else None,
                 "has_reference": bool(watch and watch.has_reference),
                 "moved": bool(watch and watch.has_moved),
                 "shift_px": round(reading.magnitude, 1) if reading else None,

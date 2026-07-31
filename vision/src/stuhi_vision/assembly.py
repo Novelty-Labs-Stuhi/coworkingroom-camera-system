@@ -389,7 +389,6 @@ def _frame_hook(
 
     def on_frame(frame, people, crossings) -> None:
         publisher.advance(people_present=bool(people))
-        shared.frames.put(camera, frame.image)
         # Only empty frames: a person is a large moving object and would drag the
         # correlation with them, reading as a camera that had moved.
         if not people:

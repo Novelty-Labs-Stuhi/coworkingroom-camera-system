@@ -143,6 +143,8 @@ function build(camera) {
 function refresh(image, camera) {
   // The endpoint sends no-store, but a cache-busting parameter also defeats any proxy.
   image.src = `/frame/${camera}.jpg?t=${Date.now()}`;
+  // Refresh the readings with the picture, so the stated age belongs to what is on screen.
+  load();
 }
 
 function saved(section) {
@@ -168,6 +170,12 @@ function describe(section, camera) {
     state.textContent = `Zone saved, view steady (${drift}).`;
   }
 
+  const age = section.querySelector('.age');
+  if (age) {
+    age.textContent = camera.frame_age === null
+      ? ''
+      : `the picture above is ${camera.frame_age.toFixed(1)} s old`;
+  }
   section.dataset.saved = camera.zone ? JSON.stringify(camera.zone) : '';
   section.querySelector('.remove').disabled = !camera.zone && !section.dataset.drawing;
   // The picture is only repainted while nobody is drawing on it: this runs every four seconds,
