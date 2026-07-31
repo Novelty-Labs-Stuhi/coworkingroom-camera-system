@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from stuhi_vision.attention import Attention
 from stuhi_vision.domain import Box, Direction, Frame, TrackedPerson
 from stuhi_vision.occlusion import Coverage, Occlusion
 from stuhi_vision.passage import PassageMonitor
@@ -12,14 +13,14 @@ from stuhi_vision.threshold import ThresholdConfig
 WIDTH, HEIGHT = 640, 480
 
 
-class FakeOcclusion:
+class ScriptedEpisodes:
     """Coverage on demand, so the composition can be tested without synthesising pixels."""
 
     def __init__(self, episodes: dict[int, Coverage]) -> None:
         self._episodes = episodes
         self._frame = -1
 
-    def update(self, image) -> Coverage | None:
+    def __call__(self) -> Coverage | None:
         self._frame += 1
         return self._episodes.get(self._frame)
 
@@ -49,7 +50,7 @@ def _monitor(episodes: dict[int, Coverage], watched: list | None = None) -> Pass
             passing_means=Direction.IN,
             min_height=0.35,
         ),
-        FakeOcclusion(episodes),
+        ScriptedEpisodes(episodes),
         watcher=None if watched is None else watched.append,
     )
 
@@ -128,11 +129,13 @@ def test_the_person_longest_on_the_box_is_the_one_credited() -> None:
 
 def test_the_pixels_and_the_tracker_together_over_synthetic_frames() -> None:
     """End to end with the real Occlusion: a dark shape sweeping across a lit doorframe."""
+    # The real thing: Attention runs the pixels once a frame and hands the episode over.
+    attention = Attention(Occlusion(zone=(0.0, 0.0, 0.5, 1.0), config=_settings()), pre_roll=4)
     monitor = PassageMonitor(
         ThresholdConfig(
             zone=(0.0, 0.0, 0.5, 1.0), edge="left", passing_means=Direction.IN, min_height=0.35
         ),
-        Occlusion(zone=(0.0, 0.0, 0.5, 1.0), config=_settings()),
+        attention.episode,
     )
 
     rng = np.random.default_rng(11)
@@ -141,16 +144,21 @@ def test_the_pixels_and_the_tracker_together_over_synthetic_frames() -> None:
 
     crossings: list = []
     for _ in range(8):               # learn the empty doorway
-        crossings += monitor.update([], Frame(timestamp=0.0, image=empty))
+        quiet = Frame(timestamp=0.0, image=empty)
+        attention.examine(quiet)
+        crossings += monitor.update([], quiet)
 
     # A body crossing right to left, tracked at the same time.
     for step, left in enumerate([0.42, 0.30, 0.18, 0.06]):
         covered = empty.copy()
         covered[:, int(left * WIDTH) : int((left + 0.14) * WIDTH)] = 15
         moment = Frame(timestamp=step + 1.0, image=covered)
+        attention.examine(moment)
         crossings += monitor.update([_person(left=left)], moment)
 
-    crossings += monitor.update([], Frame(timestamp=9.0, image=empty))
+    clear = Frame(timestamp=9.0, image=empty)
+    attention.examine(clear)
+    crossings += monitor.update([], clear)
 
     assert [crossing.direction for crossing in crossings] == [Direction.IN]
 

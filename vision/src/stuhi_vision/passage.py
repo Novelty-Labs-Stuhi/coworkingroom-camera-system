@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from .domain import Crossing, Direction, Frame, TrackedPerson
-from .occlusion import Coverage, Occlusion
+from .occlusion import Coverage
 from .threshold import ThresholdConfig, overlaps, relative
 
 
@@ -51,6 +51,10 @@ class Passage:
 
 
 Watcher = Callable[[Passage], None]
+# Asked once per frame for the coverage episode that finished on it, if any. The pixels are
+# run by whoever decides when the detector wakes (:class:`~.attention.Attention`), so that they
+# are read exactly once a frame and the same reading drives both decisions.
+Episodes = Callable[[], Coverage | None]
 
 
 class PassageMonitor:
@@ -63,11 +67,11 @@ class PassageMonitor:
     def __init__(
         self,
         config: ThresholdConfig,
-        occlusion: Occlusion,
+        episodes: Episodes,
         watcher: Watcher | None = None,
     ) -> None:
         self._config = config
-        self._occlusion = occlusion
+        self._episodes = episodes
         self._watcher = watcher
         # People seen standing on the box during the episode now running: id -> frames there.
         self._standing: dict[int, int] = {}
@@ -77,7 +81,7 @@ class PassageMonitor:
         height, width = frame.image.shape[:2]
         self._note(people, width, height)
 
-        episode = self._occlusion.update(frame.image)
+        episode = self._episodes()
         if episode is None:
             return []
 

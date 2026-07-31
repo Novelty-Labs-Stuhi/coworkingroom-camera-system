@@ -10,6 +10,7 @@ import threading
 from dataclasses import dataclass, replace
 
 from .alignment import DriftWatch
+from .attention import Attention
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
 from .domain import Sighting
@@ -21,7 +22,7 @@ from .ledger import Ledger
 from .notify import TelegramNotifier
 from .occlusion import Occlusion
 from .passage import PassageMonitor
-from .pipeline import FrameObserver, Pipeline
+from .pipeline import FrameObserver, Hooks, Pipeline
 from .publishing import Publication, SightingPublisher
 from .recognition.body import BodyEmbedder
 from .recognition.face import FaceRecognizer
@@ -216,6 +217,7 @@ def _build_camera(
         clear_frames=performance.clip_clear_frames,
     )
 
+    monitor, attention = _monitor(entry, shared.zones)
     pipeline = Pipeline(
         source=source,
         tracker=GatedTracker(
@@ -227,11 +229,14 @@ def _build_camera(
             gate=MotionGate(min_fraction=performance.motion_min_fraction),
             region_builder=_region_builder(entry, performance.crop_padding),
         ),
-        doorway=_monitor(entry, shared.zones),
+        doorway=monitor,
         sessions=sessions,
         doorkeeper=committer,
-        announce=_directional(entry.announce, publisher, announce),
-        on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
+        hooks=Hooks(
+            announce=_directional(entry.announce, publisher, announce),
+            on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
+        ),
+        attention=attention,
     )
     return Camera(
         name=entry.name,
@@ -257,7 +262,7 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
 
 
 def _monitor(entry: CameraConfig, zones: ZoneStore):
-    """The passage detector this camera configured, with any hand-drawn zone layered on.
+    """The passage detector this camera configured, and the attention it needs, if any.
 
     A zone drawn in the UI wins over the one in the config: it was drawn by somebody looking
     at the actual view, which the config's numbers can only approximate.
@@ -274,13 +279,12 @@ def _monitor(entry: CameraConfig, zones: ZoneStore):
 
     if entry.rule == "coverage":
         # Pixel change per vertical slice of the box decides the passage and its direction;
-        # the tracker only has to confirm a person was on it. See docs/design.md.
-        return PassageMonitor(
-            detector,
-            Occlusion(zone=detector.zone, config=entry.coverage),
-            watcher=report,
-        )
-    return ThresholdMonitor(detector, report=report)
+        # the tracker only has to confirm a person was on it. Attention runs those pixels
+        # once a frame, and uses them to decide when the detector is worth waking -- so the
+        # two come as a pair. See docs/design.md.
+        attention = Attention(Occlusion(zone=detector.zone, config=entry.coverage))
+        return PassageMonitor(detector, attention.episode, watcher=report), attention
+    return ThresholdMonitor(detector, report=report), None
 
 
 def _region_builder(entry: CameraConfig, padding: float):

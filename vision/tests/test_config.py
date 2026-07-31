@@ -254,5 +254,10 @@ discriminator = "approach"
     assert tracks.coverage.slices == 5
 
     zones = ZoneStore(tmp_path / "zones")
-    assert isinstance(_monitor(pixels, zones), PassageMonitor)
-    assert isinstance(_monitor(tracks, zones), ThresholdMonitor)
+    watching, attention = _monitor(pixels, zones)
+    plain, none = _monitor(tracks, zones)
+
+    assert isinstance(watching, PassageMonitor)
+    assert attention is not None   # the pixels also decide when the detector wakes
+    assert isinstance(plain, ThresholdMonitor)
+    assert none is None
