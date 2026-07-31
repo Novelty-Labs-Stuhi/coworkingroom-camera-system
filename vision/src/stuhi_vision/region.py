@@ -28,6 +28,29 @@ class Region:
     y2: int
 
     @classmethod
+    def of(
+        cls,
+        zone: tuple[float, float, float, float],
+        width: int,
+        height: int,
+    ) -> Region:
+        """The part of the frame a drawn zone covers, in pixels.
+
+        Used where a zone means "only look here": on the room camera, the doorway is one
+        corner of a wide view full of people at desks, and everything outside it is a
+        distraction the detector pays for on every frame and can mistake for somebody at the
+        door. Boxes are translated back to full-frame coordinates, so nothing downstream can
+        tell the difference.
+        """
+        x1, y1, x2, y2 = zone
+        return cls(
+            x1=max(0, int(x1 * width)),
+            y1=max(0, int(y1 * height)),
+            x2=min(width, int(x2 * width)),
+            y2=min(height, int(y2 * height)),
+        )
+
+    @classmethod
     def around(
         cls,
         line_a: tuple[float, float],

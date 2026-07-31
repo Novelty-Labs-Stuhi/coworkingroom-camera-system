@@ -48,3 +48,25 @@ def test_people_are_translated_and_keep_their_ids() -> None:
 
     assert translated[0].track_id == 7
     assert translated[0].box == Box(100, 50, 110, 60)
+
+
+def test_a_drawn_zone_becomes_the_part_of_the_frame_that_is_looked_at() -> None:
+    """On the identifying camera a zone means "only here" -- the rest is a wide, busy room."""
+    region = Region.of((0.25, 0.10, 0.75, 0.90), width=640, height=480)
+
+    assert (region.x1, region.y1, region.x2, region.y2) == (160, 48, 480, 432)
+
+
+def test_a_zone_running_to_the_edge_is_clamped_to_the_frame() -> None:
+    region = Region.of((0.0, 0.0, 1.0, 1.0), width=320, height=240)
+
+    assert (region.x1, region.y1, region.x2, region.y2) == (0, 0, 320, 240)
+
+
+def test_boxes_found_in_a_zone_come_back_in_full_frame_coordinates() -> None:
+    """Nothing downstream may be able to tell the frame was cropped."""
+    region = Region.of((0.5, 0.5, 1.0, 1.0), width=640, height=480)
+
+    moved = region.to_frame(Box(10.0, 20.0, 30.0, 40.0))
+
+    assert (moved.x1, moved.y1) == (330.0, 260.0)

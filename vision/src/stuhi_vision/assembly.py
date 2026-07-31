@@ -252,7 +252,7 @@ def _build_camera(
                 imgsz=performance.detect_imgsz,
             ),
             gate=MotionGate(min_fraction=_motion(entry, performance)),
-            region_builder=_region_builder(entry, performance.crop_padding),
+            region_builder=_region_builder(entry, performance.crop_padding, shared.zones),
         ),
         doorway=monitor,
         sessions=sessions,
@@ -357,12 +357,26 @@ def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | Non
     return ThresholdMonitor(detector, report=report), None
 
 
-def _region_builder(entry: CameraConfig, padding: float):
-    """Crop detection to the doorway line, unless cropping is off or there is no line.
+def _region_builder(entry: CameraConfig, padding: float, zones: ZoneStore):
+    """Where this camera looks: the drawn zone if it has one, else around the doorway line.
 
-    The doorframe rule needs the whole frame -- it is about a person leaving the edge of it,
-    so cropping would remove exactly the evidence it depends on.
+    A zone on a *counting* camera marks the doorframe, and that rule needs the whole frame --
+    it is about where somebody goes after covering the box, so cropping would remove the
+    evidence. A zone on an *identifying* camera means the opposite: only look here. Its view
+    is a wide room full of people at desks, and everything outside the doorway is a
+    distraction the detector pays for on every frame and can mistake for somebody arriving.
+
+    Read per frame, so redrawing a zone takes effect without a restart, like everything else
+    that zone touches.
     """
+    if entry.role == "identify":
+
+        def look_at_the_zone(width: int, height: int) -> Region | None:
+            drawn = zones.get(entry.name)
+            return None if drawn is None else Region.of(drawn.as_tuple(), width, height)
+
+        return look_at_the_zone
+
     doorway = entry.doorway
     if padding <= 0 or doorway is None:
         return None
