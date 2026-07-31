@@ -128,3 +128,25 @@ def test_the_camera_state_says_how_old_its_picture_is(tmp_path) -> None:
     assert state["name"] == "door-in"
     assert 0.0 <= state["frame_age"] < 5.0
     assert client.get("/frame/door-in.jpg").content == b"jpeg-bytes"
+
+
+def test_the_pages_version_their_stylesheet_so_a_fix_is_not_invisible(tmp_path) -> None:
+    """A cached stylesheet made a deployed CSS fix look like no fix at all.
+
+    The server was serving the corrected file and the page was still broken on screen. A token
+    that changes with the files is what makes a deploy visible without anybody remembering to
+    hard-refresh.
+    """
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.web.app import create_app
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    client = TestClient(create_app(review))
+
+    for page in ("/", "/zones"):
+        body = client.get(page).text
+        assert "/static/app.css?v=" in body
+        assert "?v={{" not in body   # the token is rendered, not left as a placeholder

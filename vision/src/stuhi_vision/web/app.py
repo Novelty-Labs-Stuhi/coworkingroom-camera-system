@@ -29,6 +29,18 @@ from ..review import ReviewQueue
 from ..zones import DrawnZone, ZoneStore
 
 _HERE = Path(__file__).parent
+_STATIC = _HERE / "static"
+
+
+def _asset_version() -> str:
+    """A token that changes when the static files do, for cache-busting their URLs.
+
+    Without it a browser keeps yesterday's stylesheet: a CSS fix that squeezed the name field
+    to 41 px was deployed, served correctly, and still broken on screen. Telling somebody to
+    hard-refresh is not a fix, it is a thing to remember forever.
+    """
+    newest = max((path.stat().st_mtime for path in _STATIC.glob("*")), default=0.0)
+    return str(int(newest))
 
 
 class LabelRequest(BaseModel):
@@ -287,11 +299,15 @@ def create_app(review: ReviewQueue, frames=None, zones=None, drift=None) -> Fast
 
     @app.get("/")
     def index(request: Request):
-        return templates.TemplateResponse(request, "index.html")
+        return templates.TemplateResponse(
+            request, "index.html", {"assets": _asset_version()}
+        )
 
     @app.get("/zones")
     def zones_page(request: Request):
-        return templates.TemplateResponse(request, "zones.html")
+        return templates.TemplateResponse(
+            request, "zones.html", {"assets": _asset_version()}
+        )
 
     _add_api_routes(app, review)
     _add_media_routes(app, review)
