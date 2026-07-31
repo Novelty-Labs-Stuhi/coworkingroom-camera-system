@@ -105,4 +105,50 @@ def test_the_kept_approach_is_bounded_by_frames_as_well_as_seconds() -> None:
         attention.examine(_frame(index))
 
     door.busy = True
-    assert len(attention.examine(_frame(50))) == 6   # five kept, plus the waking frame
+    # Five frames in total, the newest of which is the one that woke it: the cap is on what
+    # gets replayed, which is what costs a detection each.
+    assert len(attention.examine(_frame(50))) == 5
+
+
+def test_somebody_arriving_right_behind_still_gets_an_approach() -> None:
+    """The buffer must keep filling while the first person is being watched.
+
+    It used to be cleared on waking and not refilled until the box was quiet again, so a
+    second person a couple of seconds behind the first was examined only once they were
+    already on the doorframe -- which is exactly where their face cannot be seen.
+    """
+    door = Doorframe()
+    attention = Attention(door, pre_roll_seconds=0.45, linger_seconds=0.0)
+
+    for index in range(5):
+        attention.examine(_frame(index))
+
+    door.busy = True                       # the first person arrives
+    attention.examine(_frame(5))
+    for index in range(6, 10):             # ...and is watched across the doorframe
+        attention.examine(_frame(index))
+    door.busy = False
+    attention.examine(_frame(10))
+
+    door.busy = True                       # the second, moments later
+    examined = attention.examine(_frame(11))
+
+    # Only what the models have not already seen, and nothing replayed twice.
+    assert [round(frame.timestamp, 2) for frame in examined] == [1.1]
+    assert attention.examine(_frame(12)) != []
+
+
+def test_the_approach_of_a_second_person_is_replayed_when_it_was_missed() -> None:
+    door = Doorframe()
+    attention = Attention(door, pre_roll_seconds=0.45, linger_seconds=0.0)
+
+    door.busy = True                       # first person
+    attention.examine(_frame(0))
+    door.busy = False
+    for index in range(1, 8):              # a quiet gap: frames kept, models idle
+        attention.examine(_frame(index))
+
+    door.busy = True                       # second person, with an approach of their own
+    examined = attention.examine(_frame(8))
+
+    assert [round(frame.timestamp, 2) for frame in examined] == [0.4, 0.5, 0.6, 0.7, 0.8]
