@@ -59,3 +59,38 @@ def test_a_group_stored_this_way_can_be_labelled_in_order(tmp_path) -> None:
     review.label_burst(first, ["a", "b"])
 
     assert gallery.counts() == {"a": 1, "b": 1}
+
+
+def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
+    """Removing the old feed without the new one landing left the UI with no picture at all.
+
+    Deployed, that was a broken image on the zone drawing tool and an empty camera list, and
+    neither end of the wiring complains on its own -- the pipeline runs happily while the page
+    has nothing to show. So the collaboration is asserted, not trusted.
+    """
+    import numpy as np
+
+    from stuhi_vision.assembly import _Shared, _source
+    from stuhi_vision.clips import ClipRecorder
+    from stuhi_vision.config import Performance
+    from stuhi_vision.domain import Frame
+    from stuhi_vision.latest import LatestFrames
+    from stuhi_vision.zones import ZoneStore
+
+    frames = LatestFrames(lambda image: b"jpeg")
+    shared = _Shared(
+        gallery=None,
+        ledger=None,
+        review=None,
+        notifier=None,
+        frames=frames,
+        zones=ZoneStore(tmp_path),
+        witness=None,
+    )
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    camera = [Frame(timestamp=float(i), image=image) for i in range(3)]
+
+    source = _source(camera, "door-in", Performance(), shared, ClipRecorder(lambda i: b"x"))
+    assert [frame.timestamp for frame in source] == [0.0, 1.0, 2.0]
+    assert frames.cameras == ["door-in"]
+    assert frames.jpeg("door-in") == b"jpeg"

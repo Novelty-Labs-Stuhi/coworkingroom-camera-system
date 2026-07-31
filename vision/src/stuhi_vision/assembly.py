@@ -208,12 +208,7 @@ def _build_camera(
         capacity=performance.clip_frames,
         max_clip_frames=performance.clip_max_frames,
     )
-    source = _recorded(
-        BufferedSource(
-            open_source(entry.source), performance.buffer_capacity, name=entry.name
-        ),
-        recorder,
-    )
+    source = _source(open_source(entry.source), entry.name, performance, shared, recorder)
     publisher = SightingPublisher(
         recorder,
         _publisher(shared.review, shared.notifier, announce),
@@ -346,6 +341,23 @@ def _region_builder(entry: CameraConfig, padding: float):
         return Region.around(doorway.line_a, doorway.line_b, width, height, padding)
 
     return build_region
+
+
+def _source(frames, camera: str, performance, shared: _Shared, recorder: ClipRecorder):
+    """Buffer the camera, keep every frame for a clip, and hand the newest one to the UI.
+
+    The UI is fed from the *reader*, as each frame arrives. Taking it from the far end of the
+    pipeline instead showed a view up to twenty seconds old -- the reader banks hundreds of
+    frames so a slow machine loses nothing -- which is no use for drawing a zone or for seeing
+    what a camera can see right now.
+    """
+    buffered = BufferedSource(
+        frames,
+        performance.buffer_capacity,
+        name=camera,
+        on_read=lambda frame: shared.frames.put(camera, frame.image),
+    )
+    return _recorded(buffered, recorder)
 
 
 def _recorded(source, recorder: ClipRecorder):
