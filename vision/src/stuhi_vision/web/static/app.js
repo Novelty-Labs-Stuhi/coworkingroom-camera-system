@@ -67,6 +67,24 @@ function renderThin(thin) {
   document.getElementById('thin-empty').hidden = names.length > 0;
 }
 
+// Whether a card belongs to the person being looked at. A guess counts: the point of picking
+// a name is to see everything that claims to be them -- confirmed, guessed or flagged -- and a
+// wrong guess sitting among their real faces is exactly what you are looking for.
+function about(record) {
+  if (!onlyPerson) return true;
+  return (record.labelled_as || record.name) === onlyPerson;
+}
+
+function showOnly(name) {
+  onlyPerson = onlyPerson === name ? null : name;
+  const note = document.getElementById('showing');
+  note.textContent = onlyPerson
+    ? `Showing everything labelled or guessed as "${onlyPerson}".`
+    : '';
+  note.hidden = !onlyPerson;
+  loadSightings();
+}
+
 function renderPeople(people) {
   const list = document.getElementById('people');
   const names = Object.keys(people);
@@ -158,7 +176,7 @@ async function renameEverywhere(name, corrected, references) {
   const merged = body.people[body.renamed] > references;
   note.textContent = `${merged ? 'Merged into' : 'Now'} "${body.renamed}": ${body.clips} `
     + `clip(s) and ${body.events} history entr(y/ies) corrected.`;
-  load();
+  loadSightings();
 }
 
 function renderNames(names) {
