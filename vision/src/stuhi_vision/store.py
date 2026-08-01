@@ -51,12 +51,22 @@ class EventStore:
         if "camera" not in columns:
             self._conn.executescript(_sql("add_event_camera.sql"))
             self._conn.commit()
+        if "named_by" not in columns:
+            self._conn.executescript(_sql("add_event_provenance.sql"))
+            self._conn.commit()
 
     def record(self, event: Event) -> None:
         with self._lock:
             self._conn.execute(
                 _sql("insert_event.sql"),
-                (event.timestamp, event.name, event.direction.value, event.camera),
+                (
+                    event.timestamp,
+                    event.name,
+                    event.direction.value,
+                    event.camera,
+                    event.named_by,
+                    event.natural,
+                ),
             )
             self._conn.commit()
 

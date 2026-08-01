@@ -113,14 +113,31 @@ class Ledger:
         permanently and no amount of walking out could correct it.
         """
         with self._lock:
-            resolved = name if name in self._inside else None
+            # What this exit's own evidence says, with no help from the room. Kept even when
+            # the pool later overrules it, because the two disagreeing is the case worth
+            # checking: it means the exit looked like one person and the room said another.
+            natural = name if name in self._inside else None
+            named_by = "face" if natural else ""
+
+            resolved = natural
             if resolved is None:
                 resolved = self._among_occupants(face_embedding)
+                named_by = "pool" if resolved else named_by
             if resolved is None:
                 resolved = self._attribute(body_embedding)
+                named_by = "body" if resolved else named_by
             if resolved is not None:
                 del self._inside[resolved]
-            self._sink.record(Event(timestamp, resolved or UNATTRIBUTED, Direction.OUT, camera))
+            self._sink.record(
+                Event(
+                    timestamp,
+                    resolved or UNATTRIBUTED,
+                    Direction.OUT,
+                    camera,
+                    named_by=named_by or "nobody",
+                    natural=natural or "",
+                )
+            )
             return resolved
 
     def _among_occupants(self, face: np.ndarray | None) -> str | None:

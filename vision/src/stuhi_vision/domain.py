@@ -110,6 +110,14 @@ class Event:
     # Which camera saw it. With one camera per direction, this is how a drifting count can
     # be traced to the camera responsible rather than guessed at.
     camera: str = ""
+    # How an exit got its name: "face" from what the camera itself recognised, "pool" from
+    # matching against the people known to be in the room, "body" from the body embedding,
+    # "nobody" when it could not be told. Entries are always "face".
+    named_by: str = ""
+    # What the exit's *own* evidence said, before the room was consulted. When this differs
+    # from the name recorded, the pool overruled the face -- which is the pair worth checking,
+    # because one of the two is wrong.
+    natural: str = ""
 
 
 class EventSink(Protocol):
