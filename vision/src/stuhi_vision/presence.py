@@ -26,10 +26,17 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # The office day starts here. Anybody still in the room at 04:30 is counted against the day
 # that is ending, which is why the streak of somebody who works past midnight is not broken.
 DAY_STARTS_AT = time(4, 30)
+
+# ...at half past four *in the office*, which is not where the server is. The machine runs on
+# UTC, so taking the day boundary from its clock put it at 07:30 Helsinki -- three hours late,
+# which moves a morning's visits into the previous day and would break a streak on the strength
+# of where a computer happens to live. Stated explicitly rather than left to the environment.
+OFFICE = ZoneInfo("Europe/Helsinki")
 
 Window = str  # "day" | "week" | "month" | "year" | "all"
 
@@ -120,7 +127,7 @@ def epoch_for(path: Path) -> float:
     """
     if path.exists():
         return float(json.loads(path.read_text(encoding="utf-8"))["from"])
-    starts = datetime.combine(datetime.now().date(), DAY_STARTS_AT).timestamp()
+    starts = day_starting(datetime.now(OFFICE).date())
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"from": starts}, indent=2), encoding="utf-8")
     return starts
@@ -140,14 +147,14 @@ def available_from(window: Window, epoch: float) -> float:
 
 
 def office_day(moment: float) -> date:
-    """Which office day a moment belongs to, with the day starting at 04:30."""
-    when = datetime.fromtimestamp(moment)
+    """Which office day a moment belongs to, with the day starting at 04:30 in the office."""
+    when = datetime.fromtimestamp(moment, OFFICE)
     return (when - timedelta(hours=DAY_STARTS_AT.hour, minutes=DAY_STARTS_AT.minute)).date()
 
 
 def day_starting(day: date) -> float:
     """The moment an office day begins, as a timestamp."""
-    return datetime.combine(day, DAY_STARTS_AT).timestamp()
+    return datetime.combine(day, DAY_STARTS_AT, tzinfo=OFFICE).timestamp()
 
 
 def window_bounds(window: Window, offset: int, now: float) -> tuple[float, float]:

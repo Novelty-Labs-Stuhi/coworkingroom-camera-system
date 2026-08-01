@@ -171,3 +171,25 @@ def test_unclosed_entries_are_who_the_record_thinks_is_inside() -> None:
     # An exit cannot belong to somebody the record does not have inside: naming one that way
     # means an earlier entry carries the wrong name, and that mistake is in the unclosed list.
     assert could_have_left(visits, "ilari") is False
+
+
+def test_the_day_boundary_is_the_office_clock_not_the_server_clock() -> None:
+    """The machine runs on UTC; the office does not.
+
+    Taken from the server's clock, the day began at 07:30 Helsinki -- three hours late, which
+    moves a morning's visits into the previous day and can break a streak on the strength of
+    where a computer happens to live.
+    """
+    from datetime import datetime as dt
+
+    from stuhi_vision.presence import OFFICE, day_starting, office_day
+
+    started = day_starting(dt(2026, 7, 20).date())
+    assert dt.fromtimestamp(started, OFFICE).strftime("%H:%M") == "04:30"
+
+    # Five in the morning in the office is that day; four is still the day before, wherever
+    # the server thinks it is.
+    five = dt(2026, 7, 21, 5, 0, tzinfo=OFFICE).timestamp()
+    four = dt(2026, 7, 21, 4, 0, tzinfo=OFFICE).timestamp()
+    assert office_day(five) == dt(2026, 7, 21).date()
+    assert office_day(four) == dt(2026, 7, 20).date()
