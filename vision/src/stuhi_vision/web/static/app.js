@@ -58,7 +58,12 @@ function renderThin(thin) {
       label.className = 'who';
       label.textContent = name;
       label.title = `show everything labelled or guessed as "${name}"`;
-      label.addEventListener('click', () => showOnly(name));
+      // Their whole gallery, in one list, on its own page: which faces recognition uses is a
+      // different question from which sightings need checking, and mixing the two made both
+      // harder to see.
+      label.addEventListener('click', () => {
+        location.href = `/gallery?name=${encodeURIComponent(name)}`;
+      });
       const count = document.createElement('span');
       count.textContent = ` ${thin[name]} face${thin[name] === 1 ? '' : 's'}`;
       item.append(label, count);

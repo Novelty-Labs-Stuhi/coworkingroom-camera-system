@@ -70,6 +70,14 @@ class DismissRequest(BaseModel):
     name: str = ""
 
 
+class UseFaceRequest(BaseModel):
+    """Whether one face is matched against: yes, no, or leave it to the rule."""
+
+    sighting_id: str
+    # None means "let the rule decide" -- the way to undo a decision without inverting it.
+    wanted: bool | None = None
+
+
 class RenameRequest(BaseModel):
     """Correct a name wherever it was used -- a misspelling is one mistake, not one per clip."""
 
@@ -384,6 +392,91 @@ def _apply_rename(review: ReviewQueue, history, ledger, body: RenameRequest) -> 
     )
 
 
+def _add_person_routes(app: FastAPI, review: ReviewQueue) -> None:
+    """One person: every face of theirs, and which ones recognition is allowed to use."""
+
+    # Deliberately not /person: that is the presence page, and its figures are a different
+    # question about the same person. This one is about their gallery.
+    @app.get("/gallery")
+    def gallery_page(request: Request):
+        return Jinja2Templates(directory=str(_HERE / "templates")).TemplateResponse(
+            request, "person.html", {"assets": _asset_version()}
+        )
+
+    @app.get("/api/person/{name}/faces")
+    def faces(name: str, sort: str = "latest") -> JSONResponse:
+        """Every face filed under this name, with why each is or is not matched against.
+
+        ``sort`` is "latest" or "used" -- newest first, or the ones recognition uses first and
+        closest to that person's average within them. The second is the order to check the
+        gallery in: it is the faces at the top that decide who somebody is.
+        """
+        return JSONResponse(_person_dict(review, name, sort))
+
+    @app.post("/api/use-face")
+    def use_face(body: UseFaceRequest) -> JSONResponse:
+        outcome = review.use_face(body.sighting_id, body.wanted)
+        if not outcome.succeeded:
+            raise HTTPException(status_code=404, detail=outcome.value)
+        record = review.get(body.sighting_id)
+        return JSONResponse(
+            {
+                "sighting_id": body.sighting_id,
+                "wanted": body.wanted,
+                "name": record.labelled_as if record else None,
+            }
+        )
+
+
+def _person_dict(review: ReviewQueue, name: str, sort: str) -> dict:
+    """This person's faces, in the asked-for order, each saying whether it is in use and why."""
+    from ..selection import distances
+
+    records = {
+        record.sighting_id: record
+        for record in review.everything()
+        if record.labelled_as == name and not record.dismissed
+    }
+    picked = review.chosen.get(name)
+    used = set(getattr(picked, "used", ()))
+    reasons = {
+        **{sighting: "too old" for sighting in getattr(picked, "too_old", ())},
+        **{sighting: "unlike the average" for sighting in getattr(picked, "too_odd", ())},
+        **{sighting: "you asked for it" for sighting in getattr(picked, "pinned", ())},
+        **{sighting: "you excluded it" for sighting in getattr(picked, "barred", ())},
+    }
+    ages = {sighting: record.timestamp for sighting, record in records.items()}
+    closeness = distances(
+        [r for r in review.references() if r.name == name], ages
+    )
+
+    frames = [
+        {
+            "id": sighting,
+            "timestamp": record.timestamp,
+            "direction": record.direction,
+            "in_use": sighting in used,
+            "why": reasons.get(sighting, "in use" if sighting in used else "not chosen"),
+            "closeness": round(closeness.get(sighting, 0.0), 3),
+            "decided": record.use_for_matching,
+            "rejected_because": record.rejected_because,
+        }
+        for sighting, record in records.items()
+    ]
+    if sort == "used":
+        # In use first, then closest to the average: the order the gallery is judged in, since
+        # it is the faces at the top that decide who somebody is.
+        frames.sort(key=lambda frame: (not frame["in_use"], -frame["closeness"]))
+    else:
+        frames.sort(key=lambda frame: frame["timestamp"], reverse=True)
+    return {
+        "name": name,
+        "frames": frames,
+        "in_use": len(used),
+        "kept": len(frames),
+    }
+
+
 def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -> None:
     """Taking a label back, and correcting a name everywhere it was used."""
 
@@ -552,6 +645,7 @@ def create_app(
 
     _add_api_routes(app, review)
     _add_correction_routes(app, review, history, ledger)
+    _add_person_routes(app, review)
     if history is not None:
         _add_presence_routes(app, review, history)
     _add_media_routes(app, review)

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stuhi &mdash; one person</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ assets }}">
+  <link rel="stylesheet" href="/static/person.css?v={{ assets }}">
+</head>
+<body>
+  <header>
+    <p class="nav"><a href="/">&larr; Back to labelling</a></p>
+    <h1 id="who">&hellip;</h1>
+    <p class="hint" id="summary"></p>
+    <p class="hint">
+      Recognition does not use every face kept for somebody. It uses the newest 50, and of
+      those the 80% closest to their average &mdash; the ones dropped for being unlike it still
+      shape that average, because they are still that person. Anything you add or remove here
+      overrules that, and your choice is kept.
+    </p>
+    <p class="hint" id="ordering">
+      Order:
+      <button type="button" class="sort chosen" data-sort="latest">newest first</button>
+      <button type="button" class="sort" data-sort="used">in use first, closest to average</button>
+    </p>
+  </header>
+
+  <div id="frames" class="grid"></div>
+  <p class="empty" id="frames-empty">No faces kept under this name.</p>
+
+  <template id="frame-template">
+    <article class="card frame">
+      <img class="face" alt="one face of this person">
+      <p class="state"></p>
+      <p class="numbers"></p>
+      <div class="actions">
+        <button type="button" class="use">Use for recognition</button>
+        <button type="button" class="drop reject">Do not use</button>
+        <button type="button" class="auto reject" title="let the rule decide again">Automatic</button>
+      </div>
+      <p class="result" role="status"></p>
+    </article>
+  </template>
+
+  <script src="/static/person.js?v={{ assets }}"></script>
+</body>
+</html>

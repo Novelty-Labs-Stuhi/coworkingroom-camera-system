@@ -29,6 +29,11 @@ class FaceGallery:
 
     def __init__(self, references: dict[str, list[np.ndarray]] | None = None) -> None:
         self._references: dict[str, list[np.ndarray]] = references or {}
+        # What matching actually compares against, when a choice has been made about it. Every
+        # enrolled face is still kept -- that is the record, and a face dropped today may be
+        # wanted tomorrow -- but a gallery that matches against all of them gets worse as it
+        # grows: an old haircut and a mislabel pull matches towards themselves for ever.
+        self._matching: dict[str, list[np.ndarray]] | None = None
         self._lock = threading.RLock()
 
     @classmethod
@@ -103,13 +108,33 @@ class FaceGallery:
             )
 
     def match(self, embedding: np.ndarray, threshold: float) -> Match | None:
+        """The best name for this face, over the matching set rather than everything kept."""
         with self._lock:
-            return nearest(embedding, self._references, threshold)
+            source = self._matching if self._matching is not None else self._references
+            return nearest(embedding, source, threshold)
+
+    def use_only(self, matching: dict[str, list[np.ndarray]] | None) -> None:
+        """Match against these vectors from now on; ``None`` means every enrolled face.
+
+        Chosen elsewhere (:mod:`~stuhi_vision.selection`), because choosing needs to know when
+        each face was seen and what a person has decided about it -- neither of which belongs
+        in a store of vectors.
+        """
+        with self._lock:
+            self._matching = matching
+
+    @property
+    def matching_counts(self) -> dict[str, int]:
+        """How many of each person's faces are actually matched against."""
+        with self._lock:
+            source = self._matching if self._matching is not None else self._references
+            return {name: len(vectors) for name, vectors in source.items() if vectors}
 
     def rank(self, embedding: np.ndarray) -> list[Match]:
-        """Every enrolled name scored against ``embedding``, best first."""
+        """Every name scored against ``embedding``, best first, over the matching set."""
         with self._lock:
-            return rank(embedding, self._references)
+            source = self._matching if self._matching is not None else self._references
+            return rank(embedding, source)
 
     def counts(self) -> dict[str, int]:
         """How many reference vectors are enrolled per name."""

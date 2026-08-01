@@ -35,6 +35,7 @@ from .domain import Outcome, Sighting
 from .enrolment import Audit, Reference, audit
 from .names import parse_names
 from .recognition.gallery import FaceGallery
+from .selection import choose
 
 _INDEX = "index.json"
 
@@ -100,6 +101,11 @@ class ReviewRecord:
     # exactly what rejecting it is meant to prevent. This only says who came through, which is
     # what the time-in-the-room figures need.
     attributed_to: str = ""
+    # What a person decided about using this face for recognition: True to use it whatever the
+    # numbers say, False never to use it, None to let the rule choose. Their choice wins --
+    # somebody who has looked knows things the numbers do not, such as that this is the only
+    # picture of a colleague with their new beard.
+    use_for_matching: bool | None = None
     # A person has looked at this and saved it. It never returns to "worth rechecking":
     # whatever the audit thinks of the numbers, somebody has judged it, and offering it back
     # would be arguing with them for ever.
@@ -134,6 +140,7 @@ class ReviewQueue:
         # the web UI, so the record index needs guarding as much as the gallery does.
         self._lock = threading.RLock()
         self._load()
+        self.refresh_matching()
 
     # --- recording ----------------------------------------------------------
     def labelled(self, limit: int = 50) -> list[ReviewRecord]:
@@ -275,6 +282,9 @@ class ReviewQueue:
         )
         self._flush()
         self._correct_history(record, name)
+        # The matching set follows every change to the labelled faces, or a correction would
+        # not reach recognition until the next restart.
+        self.refresh_matching()
 
     def _correct_history(self, record: ReviewRecord, name: str) -> None:
         """Put this name on the crossing itself, so the presence figures follow the correction.
@@ -435,6 +445,49 @@ class ReviewQueue:
             self._flush()
             return LabelOutcome.UNLABELLED
 
+    def use_face(self, sighting_id: str, wanted: bool | None) -> LabelOutcome:
+        """Decide whether this face is matched against: yes, no, or leave it to the rule."""
+        with self._lock:
+            record = self._records.get(sighting_id)
+            if record is None:
+                return LabelOutcome.UNKNOWN_ID
+            self._records[sighting_id] = ReviewRecord(
+                **{**asdict(record), "use_for_matching": wanted}
+            )
+            self._flush()
+        self.refresh_matching()
+        return LabelOutcome.CORRECTED
+
+    def refresh_matching(self) -> None:
+        """Recompute what the gallery matches against, from every enrolled face.
+
+        Called after anything that changes the labelled set -- a label, a correction, a
+        rejection, a rename, a decision about one face. The gallery keeps every face; this
+        decides which of them recognition is allowed to use.
+        """
+        references = self.references()
+        with self._lock:
+            ages = {r.sighting_id: r.timestamp for r in self._records.values()}
+            decided = {
+                r.sighting_id: r.use_for_matching
+                for r in self._records.values()
+                if r.use_for_matching is not None
+            }
+        chosen = choose(references, ages, decided)
+        vectors = {r.sighting_id: r.embedding for r in references}
+        self._gallery.use_only(
+            {
+                name: [vectors[sighting] for sighting in picked.used if sighting in vectors]
+                for name, picked in chosen.items()
+            }
+        )
+        self._chosen = chosen
+
+    @property
+    def chosen(self) -> dict[str, object]:
+        """The current selection per person, for showing why a face is or is not in use."""
+        return dict(getattr(self, "_chosen", {}) or {})
+
     def rename(self, old: str, new: str) -> int:
         """Correct a name everywhere it was used: the gallery and every sighting labelled it.
 
@@ -546,6 +599,11 @@ class ReviewQueue:
         return {
             suspect.sighting_id: suspect.similarity for suspect in self.audit().suspects
         }
+
+    def everything(self) -> list[ReviewRecord]:
+        """Every record, for a view that needs one person's whole history rather than a pile."""
+        with self._lock:
+            return list(self._records.values())
 
     def recent_names(self, limit: int = 20) -> list[str]:
         """Names in the order they were last used, most recent first.

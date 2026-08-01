@@ -1,0 +1,14 @@
+/* One person's faces. Whether a face is used for recognition is the only thing this page is
+   about, so it is said on every card rather than implied by an icon. */
+.frame .state { margin: .5rem 0 0; font-size: .85rem; font-weight: 600; }
+.frame.using { border-color: var(--ok); }
+.frame.using .state { color: var(--ok); }
+.frame.idle .state { color: var(--muted); }
+.frame.decided { border-style: dashed; }
+
+.frame .numbers { margin: .2rem 0 .4rem; font-size: .78rem; color: var(--muted); }
+.frame .actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.frame .actions button { font-size: .8rem; padding: .3rem .55rem; }
+.frame .actions .use[disabled],
+.frame .actions .drop[disabled],
+.frame .actions .auto[disabled] { opacity: .35; }
