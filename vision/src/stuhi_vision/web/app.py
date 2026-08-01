@@ -392,6 +392,93 @@ def _apply_rename(review: ReviewQueue, history, ledger, body: RenameRequest) -> 
     )
 
 
+def _add_accounting_routes(app: FastAPI, review: ReviewQueue, history, passages) -> None:
+    """Whether the count adds up: entries with no exit, and exits the room renamed."""
+
+    @app.get("/api/accounting")
+    def accounting(pile: str = "missing_exits") -> JSONResponse:
+        """The two ways the count goes wrong, since the office day began.
+
+        Both are pairs of a sort. A missing exit comes with the passages that were seen
+        afterwards and refused -- the evidence for where it went. A renamed exit comes with the
+        entry it was matched to, because if the room named it wrongly then two people are wrong
+        at once, and confirming one half without the other proves nothing.
+        """
+        from ..accounting import renamed_exits, unmatched_entries, with_missed
+        from ..presence import day_starting, office_day
+
+        if history is None:
+            return JSONResponse({"pile": pile, "since": None, "entries": []})
+
+        from datetime import datetime
+
+        from ..presence import OFFICE
+
+        # The same boundary the presence figures use: the office day starts at 04:30, so
+        # somebody in the room at one in the morning is still finishing the previous day --
+        # which is why the day is asked for by moment rather than by calendar date. Taking
+        # today's date before 04:30 puts the start of the window in the future and returns
+        # nothing at all.
+        now = datetime.now(OFFICE).timestamp()
+        since = day_starting(office_day(now))
+        until = now
+        crossings = history.crossings(since, until)
+
+        if pile == "renamed_exits":
+            found = renamed_exits(crossings, since, until)
+            return JSONResponse(
+                {
+                    "pile": pile,
+                    "since": since,
+                    "entries": [
+                        {
+                            "given": pair.given,
+                            "natural": pair.natural,
+                            "exit_at": pair.exit_at,
+                            "entry_at": pair.entry_at,
+                            "exit_frame": _frame_at(review, pair.exit_at, "out"),
+                            "entry_frame": _frame_at(review, pair.entry_at, "in"),
+                            "readable": pair.readable,
+                        }
+                        for pair in found
+                    ],
+                }
+            )
+
+        refused = passages.refused(since, until) if passages is not None else []
+        open_entries = with_missed(unmatched_entries(crossings, since, until), refused, until)
+        return JSONResponse(
+            {
+                "pile": pile,
+                "since": since,
+                "entries": [
+                    {
+                        "name": entry.name,
+                        "entered_at": entry.entered_at,
+                        "entry_frame": _frame_at(review, entry.entered_at, "in"),
+                        "missed": list(entry.missed),
+                        "readable": entry.readable,
+                    }
+                    for entry in open_entries
+                ],
+            }
+        )
+
+
+def _frame_at(review: ReviewQueue, moment: float | None, direction: str) -> str | None:
+    """The sighting recorded for a crossing, so a pair can be shown as pictures.
+
+    Matched on the moment, because that is what the two records share: the crossing wrote the
+    event and the sighting from the same timestamp. A second either way covers the rounding.
+    """
+    if moment is None:
+        return None
+    for record in review.everything():
+        if record.direction == direction and abs(record.timestamp - moment) <= 1.0:
+            return record.sighting_id
+    return None
+
+
 def _add_person_routes(app: FastAPI, review: ReviewQueue) -> None:
     """One person: every face of theirs, and which ones recognition is allowed to use."""
 
@@ -618,7 +705,13 @@ def _add_media_routes(app: FastAPI, review: ReviewQueue) -> None:
 
 
 def create_app(
-    review: ReviewQueue, frames=None, zones=None, drift=None, history=None, ledger=None
+    review: ReviewQueue,
+    frames=None,
+    zones=None,
+    drift=None,
+    history=None,
+    ledger=None,
+    passages=None,
 ) -> FastAPI:
     """Build the labelling UI over an existing review queue."""
     app = FastAPI(title="stuhi labelling")
@@ -646,6 +739,7 @@ def create_app(
     _add_api_routes(app, review)
     _add_correction_routes(app, review, history, ledger)
     _add_person_routes(app, review)
+    _add_accounting_routes(app, review, history, passages)
     if history is not None:
         _add_presence_routes(app, review, history)
     _add_media_routes(app, review)

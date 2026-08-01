@@ -13,6 +13,7 @@ import threading
 from importlib import resources
 from pathlib import Path
 
+from .accounting import Crossing
 from .domain import Event
 
 
@@ -108,6 +109,22 @@ class EventStore:
             ).fetchall()
         return [(name, float(at), direction) for name, at, direction in rows]
 
+    def crossings(self, since: float, until: float) -> list[Crossing]:
+        """Every crossing in a window, as the accounting needs it."""
+        with self._lock:
+            rows = self._conn.execute(_sql("crossings_between.sql"), (since, until)).fetchall()
+        return [
+            Crossing(
+                timestamp=float(timestamp),
+                name=name,
+                direction=direction,
+                camera=camera or "",
+                named_by=named_by or "",
+                natural=natural or "",
+            )
+            for timestamp, name, direction, camera, named_by, natural in rows
+        ]
+
     def recent(self, limit: int = 50) -> list[tuple[float, str, str, str]]:
         with self._lock:
             rows = self._conn.execute(_sql("recent_events.sql"), (limit,)).fetchall()
@@ -153,6 +170,24 @@ class PassageStore:
                 self._conn.commit()
         except Exception as exc:
             _log.error("could not record the passage: %s", exc)
+
+    def refused(self, since: float, until: float) -> list[dict]:
+        """Passages seen and not counted, which is where a missing exit usually is."""
+        with self._lock:
+            rows = self._conn.execute(_sql("refused_between.sql"), (since, until)).fetchall()
+        return [
+            {
+                "timestamp": float(timestamp),
+                "camera": camera,
+                "frames": frames,
+                "slices": slices,
+                "peak": peak,
+                "lag": lag,
+                "person": person,
+                "direction": direction,
+            }
+            for timestamp, camera, frames, slices, peak, lag, person, direction in rows
+        ]
 
     def close(self) -> None:
         self._conn.close()

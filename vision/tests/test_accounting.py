@@ -95,3 +95,41 @@ def test_only_the_asked_for_window_is_accounted(tmp_path=None) -> None:
     crossings = [_in("art", DAY - 10_000), _in("ilari", DAY + 10)]
 
     assert [entry.name for entry in unmatched_entries(crossings, DAY, DAY + 1000)] == ["ilari"]
+
+
+def test_the_api_offers_both_kinds_with_their_evidence(tmp_path) -> None:
+    """End to end: what the page will actually be given."""
+    import time
+
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.domain import Direction, Event
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.store import EventStore, PassageStore
+    from stuhi_vision.web.app import create_app
+
+    history = EventStore(tmp_path / "events.db")
+    passages = PassageStore(tmp_path / "events.db")
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+
+    recent = time.time() - 300
+    history.record(Event(recent, "art", Direction.IN, "door-in", named_by="face"))
+    history.record(Event(recent + 10, "ilari", Direction.IN, "door-in", named_by="face"))
+    history.record(
+        Event(recent + 60, "ilari", Direction.OUT, "door-in", named_by="pool", natural="art")
+    )
+
+    client = TestClient(create_app(review, history=history, passages=passages))
+
+    missing = client.get("/api/accounting?pile=missing_exits").json()
+    assert [entry["name"] for entry in missing["entries"]] == ["art"]
+
+    renamed = client.get("/api/accounting?pile=renamed_exits").json()
+    assert len(renamed["entries"]) == 1
+    pair = renamed["entries"][0]
+    assert pair["given"] == "ilari" and pair["natural"] == "art"
+    assert pair["entry_at"] is not None      # paired with that person's entry
+
+    history.close()
+    passages.close()

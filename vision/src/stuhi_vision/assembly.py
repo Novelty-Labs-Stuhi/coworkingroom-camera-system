@@ -194,6 +194,8 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
                 # only the gallery: two spellings read as two half-present people.
                 history=store,
                 ledger=ledger,
+                # The refused passages: the evidence for an exit that was never counted.
+                passages=passages,
             ),
             host=config.web.host,
             port=config.web.port,
