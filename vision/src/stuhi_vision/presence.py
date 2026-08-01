@@ -21,9 +21,11 @@ split that visit across two days and break a streak that should stand.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 # The office day starts here. Anybody still in the room at 04:30 is counted against the day
 # that is ending, which is why the streak of somebody who works past midnight is not broken.
@@ -105,6 +107,38 @@ def visits_from(passages: Iterable[Passage]) -> list[Visit]:
     return sorted(visits, key=lambda visit: visit.entered)
 
 
+def epoch_for(path: Path) -> float:
+    """When counting begins, fixed the first time it is asked for and never moved after.
+
+    The figures start at 04:30 on the day this was switched on, not at the start of whatever
+    the log happens to contain. Two reasons. The log holds months of crossings recorded while
+    the rules were being changed hourly -- counting them would present four days of that as
+    somebody's record. And a boundary that moved with the current date would silently rewrite
+    every past total each morning.
+
+    Written down rather than computed, because "today" stops being today tomorrow.
+    """
+    if path.exists():
+        return float(json.loads(path.read_text(encoding="utf-8"))["from"])
+    starts = datetime.combine(datetime.now().date(), DAY_STARTS_AT).timestamp()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"from": starts}, indent=2), encoding="utf-8")
+    return starts
+
+
+def available_from(window: Window, epoch: float) -> float:
+    """When a window first has anything to say.
+
+    A week's leaderboard on its second day is not a week's leaderboard -- it looks like one
+    while being a day's, which is worse than showing nothing. So each window waits until one
+    of it has actually passed since counting began. The running total and the streak start
+    with the epoch itself: both are honest from the first minute, being explicitly "so far".
+    """
+    if window in ("all", "streak"):
+        return epoch
+    return epoch + {"day": 1, "week": 7, "month": 30, "year": 365}.get(window, 1) * 24 * 3600
+
+
 def office_day(moment: float) -> date:
     """Which office day a moment belongs to, with the day starting at 04:30."""
     when = datetime.fromtimestamp(moment)
@@ -126,6 +160,7 @@ def window_bounds(window: Window, offset: int, now: float) -> tuple[float, float
     today = office_day(now)
     if window == "all":
         return 0.0, now
+
     length = {"day": 1, "week": 7, "month": 30, "year": 365}.get(window, 1)
     start_day = today - timedelta(days=length * offset + (length - 1))
     start = day_starting(start_day)

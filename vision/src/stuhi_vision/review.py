@@ -594,6 +594,11 @@ class ReviewQueue:
         """Which enrolled faces look wrong, and who has too few examples."""
         return audit(self.references())
 
+    @property
+    def directory(self) -> Path:
+        """Where this deployment's review data lives, for things kept beside it."""
+        return self._dir
+
     def nearest(self, at: float, direction: str, window: float = 2.0) -> ReviewRecord | None:
         """The sighting for a crossing at this moment, so a clip can be shown for it.
 

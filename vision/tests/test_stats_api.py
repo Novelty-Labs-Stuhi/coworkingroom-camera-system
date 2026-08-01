@@ -15,7 +15,20 @@ from stuhi_vision.store import EventStore
 from stuhi_vision.web.app import create_app
 
 
-def _client(tmp_path, passages):
+def _client(tmp_path, passages, counting_since: float | None = None):
+    """A client whose counting began long ago, unless a test says otherwise.
+
+    The epoch is what stops the boards presenting months of crossings recorded while the rules
+    were changing hourly. Every test about *figures* wants it out of the way; the tests about
+    the epoch itself set it deliberately.
+    """
+    import json
+
+    (tmp_path / "review").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "review" / "stats-epoch.json").write_text(
+        json.dumps({"from": counting_since if counting_since is not None else 0.0}),
+        encoding="utf-8",
+    )
     history = EventStore(tmp_path / "events.db")
     for name, at, direction in passages:
         history.record(
@@ -131,11 +144,55 @@ def test_the_inside_list_is_what_a_correction_may_need_to_reach(tmp_path) -> Non
     history.close()
 
 
-def test_a_window_that_has_not_finished_says_so(tmp_path) -> None:
-    client, _, history = _client(tmp_path, [("ilari", _hours_ago(2), "in")])
+def test_nothing_is_counted_before_counting_begins(tmp_path) -> None:
+    """The figures start when they were switched on, not at the start of the log.
 
-    assert client.get("/api/leaderboard?window=year").json()["complete"] is True
-    assert isinstance(client.get("/api/leaderboard?window=month").json()["from"], float)
+    Otherwise months of crossings recorded while the rules were being changed hourly would be
+    presented as somebody's record.
+    """
+    client, _, history = _client(
+        tmp_path,
+        [("ilari", _hours_ago(48), "in"), ("ilari", _hours_ago(40), "out")],
+        counting_since=_hours_ago(24),
+    )
+
+    board = client.get("/api/leaderboard?window=all").json()
+
+    assert board["standings"] == []   # it all happened before counting began
+    history.close()
+
+
+def test_a_window_says_nothing_until_one_of_it_has_passed(tmp_path) -> None:
+    """A week's board on its second day looks like a week's while being a day's."""
+    client, _, history = _client(
+        tmp_path,
+        [("ilari", _hours_ago(3), "in"), ("ilari", _hours_ago(1), "out")],
+        counting_since=_hours_ago(6),
+    )
+
+    week = client.get("/api/leaderboard?window=week").json()
+    running = client.get("/api/leaderboard?window=all").json()
+
+    assert week["ready"] is False and week["standings"] == []
+    assert week["ready_at"] > time.time()          # and says when it will mean something
+    # The running total is honest from the first minute, being explicitly "so far".
+    assert running["ready"] is True
+    assert [row["name"] for row in running["standings"]] == ["ilari"]
+    history.close()
+
+
+def test_before_counting_starts_there_is_nothing_at_all(tmp_path) -> None:
+    """Switched on at 04:30 today, asked at half past three: every board is empty."""
+    client, _, history = _client(
+        tmp_path,
+        [("ilari", _hours_ago(3), "in")],
+        counting_since=time.time() + 3600,
+    )
+
+    for window in ("streak", "day", "week", "month", "year", "all"):
+        board = client.get(f"/api/leaderboard?window={window}").json()
+        assert board["ready"] is False, window
+        assert board["standings"] == [], window
     history.close()
 
 

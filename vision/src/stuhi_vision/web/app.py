@@ -28,6 +28,8 @@ from starlette.requests import Request
 from ..names import parse_names
 from ..presence import (
     Passage,
+    available_from,
+    epoch_for,
     leaderboard,
     readable,
     streaks,
@@ -164,6 +166,30 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
     )
 
 
+def _not_yet(window: str, offset: int, epoch: float, now: float, ready: float) -> JSONResponse:
+    """A window that has not passed yet says so, and says when it will mean something."""
+    return JSONResponse(
+        {
+            "window": window,
+            "offset": offset,
+            "from": epoch,
+            "until": now,
+            "ready": False,
+            "ready_at": ready,
+            "standings": [],
+        }
+    )
+
+
+def _standings(window: str, offset: int, found, epoch: float, now: float):
+    """The rows for one window, and the period they cover."""
+    if window == "streak":
+        return streaks(found, now), epoch, now
+    start, end = window_bounds(window, offset, now)
+    start = max(start, epoch)
+    return leaderboard(found, start, end, now), start, end
+
+
 def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
     """Time in the room, and the unclosed entries a correction may need to reach.
 
@@ -171,32 +197,42 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
     the answer, and a stored total would be wrong until somebody remembered to rebuild it.
     """
 
-    def visits():
+    # Where the epoch is written down. Beside the review data, because it belongs to this
+    # deployment rather than to the code.
+    epoch_path = review.directory / "stats-epoch.json"
+
+    def visits(since: float):
+        """Visits from the crossings, ignoring everything before counting began."""
         return visits_from(
             Passage(name=name, at=at, direction=direction)
             for name, at, direction in history.passages()
+            if at >= since
         )
 
     @app.get("/api/leaderboard")
     def board(window: str = "week", offset: int = 0) -> JSONResponse:
-        """Who spent the longest in the room, over one window, ``offset`` windows back."""
+        """Who spent the longest in the room, over one window, ``offset`` windows back.
+
+        Nothing before counting began is included, and a window says nothing until one of it
+        has passed since then. A week's board on its second day looks like a week's while
+        being a day's, which is worse than an empty page saying when it will mean something.
+        """
         now = time.time()
-        found = visits()
-        if window == "streak":
-            standings = streaks(found, now)
-            start, end = 0.0, now
-        else:
-            start, end = window_bounds(window, offset, now)
-            standings = leaderboard(found, start, end, now)
+        epoch = epoch_for(epoch_path)
+        ready = available_from(window, epoch)
+        if now < ready:
+            return _not_yet(window, offset, epoch, now, ready)
+
+        found = visits(epoch)
+        standings, start, end = _standings(window, offset, found, epoch, now)
         return JSONResponse(
             {
                 "window": window,
                 "offset": offset,
                 "from": start,
                 "until": end,
-                # Empty until the first such window has passed: a month's board on its second
-                # day says less than nothing, because it looks like a month's worth.
-                "complete": window in ("all", "streak") or offset > 0 or end >= start,
+                "ready": True,
+                "ready_at": ready,
                 "standings": [
                     {
                         "name": standing.name,
@@ -219,11 +255,12 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
     def person(name: str) -> JSONResponse:
         """One person's own figures, and every visit behind them."""
         now = time.time()
-        found = [visit for visit in visits() if visit.name == name]
+        epoch = epoch_for(epoch_path)
+        found = [visit for visit in visits(epoch) if visit.name == name]
         totals = {}
         for window in ("day", "week", "month", "year", "all"):
             start, end = window_bounds(window, 0, now)
-            held = sum(visit.overlap(start, end, now) for visit in found)
+            held = sum(visit.overlap(max(start, epoch), end, now) for visit in found)
             totals[window] = {"seconds": round(held, 1), "readable": readable(held)}
         run = next((s.seconds for s in streaks(found, now) if s.name == name), 0.0)
         return JSONResponse(
@@ -252,7 +289,9 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
         the record has inside, so naming one otherwise means an earlier *entry* carries the
         wrong name -- and that mistake is necessarily one of these.
         """
-        open_visits = sorted(unclosed(visits()), key=lambda visit: -visit.entered)
+        open_visits = sorted(
+            unclosed(visits(epoch_for(epoch_path))), key=lambda visit: -visit.entered
+        )
         listed = []
         for visit in open_visits:
             record = review.nearest(visit.entered, "in")

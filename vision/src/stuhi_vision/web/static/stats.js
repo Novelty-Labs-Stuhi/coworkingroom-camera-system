@@ -18,8 +18,30 @@ async function load() {
     (row) => !filter || row.name.toLowerCase().includes(filter)
   );
   renderBoard(rows);
-  document.getElementById('board-empty').hidden = rows.length > 0;
+  sayWhy(board, rows.length);
   await loadInside();
+}
+
+// An empty board has two quite different meanings, and saying which is the whole difference
+// between a page that looks broken and one that is waiting.
+function sayWhy(board, shown) {
+  const note = document.getElementById('board-empty');
+  note.hidden = shown > 0;
+  if (shown > 0) return;
+  if (board.ready) {
+    note.textContent = filter
+      ? `Nobody matching “${filter}” appeared in this period.`
+      : 'Nobody appeared in this period.';
+    return;
+  }
+  const when = new Date(board.ready_at * 1000);
+  const started = new Date(board.from * 1000);
+  note.textContent =
+    started > new Date()
+      ? `Counting starts at ${asMoment(board.from)}. Nothing is recorded against these `
+        + 'figures until then.'
+      : `Counting began at ${asMoment(board.from)}. This period has one of it to run: `
+        + `it will mean something from ${when.toLocaleString()}.`;
 }
 
 function showCovering(board) {
@@ -28,6 +50,8 @@ function showCovering(board) {
     note.textContent = 'days in a row, counted to today';
   } else if (window_ === 'all') {
     note.textContent = 'everything recorded';
+  } else if (!board.ready) {
+    note.textContent = 'not yet';
   } else {
     note.textContent = `${asDay(board.from)} to ${asDay(board.until)}`;
   }
