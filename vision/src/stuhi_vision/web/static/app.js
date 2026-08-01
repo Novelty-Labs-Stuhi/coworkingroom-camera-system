@@ -11,6 +11,26 @@ const MESSAGES = {
 // Newest first, or furthest from that person's average face first -- which puts the likeliest
 // mistakes at the top instead of the most recent.
 let sortBy = 'latest';
+// Which pile is on screen. One at a time: with seven of them, stacking made the one being
+// worked through impossible to find.
+let showing = 'unchecked_unknown';
+
+// The two piles that are not sightings but *pairs* of crossings, and come from the accounting
+// rather than the review queue. They are about whether the count adds up, not about labelling.
+const PAIRED = new Map([
+  [
+    'renamed_exits',
+    'Exits the room named by matching against whoever was inside, rather than from the face '
+    + 'itself. If one of these is wrong, two people are wrong at once -- so the exit is shown '
+    + 'with the entry it was matched to, and both need to be right.',
+  ],
+  [
+    'missing_exits',
+    'Somebody the record says came in and never left, since the office day began at 04:30. '
+    + 'They are still counted as inside. Underneath each is what the doorway saw afterwards '
+    + 'and did not count -- the lost exit is usually one of them.',
+  ],
+]);
 
 async function loadSightings() {
   const response = await fetch(`/api/sightings?sort=${sortBy}`);
@@ -20,11 +40,16 @@ async function loadSightings() {
   renderNames(Object.keys(data.people));
   // Most recently used first: the answer is usually one of the last few people through.
   recentNames = data.recent_names || [];
-  for (const section of document.querySelectorAll('.pile')) {
-    const shown = (data[section.dataset.pile] || []).filter(about);
-    renderCards(section.querySelector('.grid'), shown);
-    section.querySelector('.count').textContent = shown.length ? `(${shown.length})` : '';
-    section.querySelector('.empty').hidden = shown.length > 0;
+  // Every pile's size is shown on its button, so the one worth opening is visible without
+  // opening it. Only the chosen pile's cards are built.
+  for (const button of document.querySelectorAll('.pick')) {
+    const rows = (data[button.dataset.pile] || []).filter(about);
+    button.querySelector('.count').textContent = rows.length ? `(${rows.length})` : '';
+  }
+  if (!PAIRED.has(showing)) {
+    const rows = (data[showing] || []).filter(about);
+    renderCards(document.getElementById('cards'), rows);
+    document.getElementById('cards-empty').hidden = rows.length > 0;
   }
   await loadAudit();
 }
@@ -458,5 +483,76 @@ for (const button of document.querySelectorAll('.sort')) {
   });
 }
 
-loadSightings();
-setInterval(loadSightings, 15000);
+async function loadAccounting() {
+  const response = await fetch(`/api/accounting?pile=${showing}`);
+  if (!response.ok) return;
+  const data = await response.json();
+  const host = document.getElementById('cards');
+  host.replaceChildren(...data.entries.map(buildPair));
+  document.getElementById('cards-empty').hidden = data.entries.length > 0;
+  const button = document.querySelector(`.pick[data-pile="${showing}"] .count`);
+  if (button) button.textContent = data.entries.length ? `(${data.entries.length})` : '';
+}
+
+// A pair is shown as a pair: two pictures side by side, because the question is whether the
+// two belong together and that cannot be judged from one of them.
+function buildPair(entry) {
+  const article = document.createElement('article');
+  article.className = 'card pair';
+
+  const said = document.createElement('p');
+  said.className = 'current';
+  said.textContent = entry.readable;
+  article.append(said);
+
+  const faces = document.createElement('div');
+  faces.className = 'together';
+  for (const [id, caption] of [
+    [entry.entry_frame, 'came in'],
+    [entry.exit_frame, 'went out'],
+  ]) {
+    if (!id) continue;
+    const figure = document.createElement('figure');
+    figure.className = 'mate';
+    const face = document.createElement('img');
+    face.src = `/media/${id}.jpg`;
+    face.addEventListener('error', () => figure.remove());
+    const label = document.createElement('figcaption');
+    label.textContent = caption;
+    figure.append(face, label);
+    faces.append(figure);
+  }
+  article.append(faces);
+
+  if (entry.missed && entry.missed.length) {
+    const seen = document.createElement('p');
+    seen.className = 'why';
+    seen.textContent = `${entry.missed.length} passage(s) seen afterwards and not counted: `
+      + entry.missed
+        .map((passage) => `${passage.direction || 'no direction'} over ${passage.frames} frames`)
+        .join('; ');
+    article.append(seen);
+  }
+  return article;
+}
+
+for (const button of document.querySelectorAll('.pick')) {
+  button.addEventListener('click', () => {
+    showing = button.dataset.pile;
+    for (const other of document.querySelectorAll('.pick')) {
+      other.classList.toggle('chosen', other === button);
+    }
+    document.getElementById('about-pile').textContent = PAIRED.get(showing) || '';
+    // Ordering is a question about sightings; a pair is already in the order it happened.
+    document.getElementById('sorting').hidden = PAIRED.has(showing);
+    document.getElementById('cards').replaceChildren();
+    refresh();
+  });
+}
+
+function refresh() {
+  return PAIRED.has(showing) ? Promise.all([loadSightings(), loadAccounting()]) : loadSightings();
+}
+
+refresh();
+setInterval(refresh, 15000);

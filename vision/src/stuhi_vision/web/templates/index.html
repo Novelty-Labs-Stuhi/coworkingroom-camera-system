@@ -24,51 +24,33 @@
     <p class="hint" id="showing" role="status" hidden></p>
   </section>
 
+  <nav id="which" class="which">
+    <button type="button" class="pick chosen" data-pile="unchecked_unknown">
+      Needs a name <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="unchecked_named">
+      Guessed <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="recheck">
+      Worth rechecking <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="checked_unknown">
+      Left unknown <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="checked">
+      All checked <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="renamed_exits">
+      Exits the room renamed <span class="count"></span></button>
+    <button type="button" class="pick" data-pile="missing_exits">
+      Came in, never left <span class="count"></span></button>
+  </nav>
+
+  <p class="hint" id="about-pile"></p>
+
   <p class="hint" id="sorting">
     Order:
     <button type="button" class="sort chosen" data-sort="latest">newest first</button>
     <button type="button" class="sort" data-sort="odd">least like that person first</button>
   </p>
 
-  <section class="pile" data-pile="unchecked_unknown">
-    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
-      Nobody recognised &mdash; needs a name <span class="count"></span></h2>
-    
-    <div class="grid"></div>
-    <p class="empty">Nothing waiting.</p>
-  </section>
-
-  <section class="pile" data-pile="unchecked_named">
-    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
-      Guessed &mdash; needs your check <span class="count"></span></h2>
-    
-    <div class="grid"></div>
-    <p class="empty">Nothing waiting.</p>
-  </section>
-
-  <section class="pile" data-pile="recheck">
-    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
-      Worth rechecking <span class="count"></span></h2>
-    
-    <div class="grid"></div>
-    <p class="empty">Nothing to recheck.</p>
-  </section>
-
-  <section class="pile" data-pile="checked_unknown">
-    <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
-      Checked, and unknown <span class="count"></span></h2>
-    
-    <div class="grid"></div>
-    <p class="empty">None.</p>
-  </section>
-
-  <section class="pile" data-pile="checked">
-    <h2><button type="button" class="fold" aria-expanded="false">&#9656;</button>
-      Everything you have checked <span class="count"></span></h2>
-    
-    <div class="grid"></div>
-    <p class="empty">None yet.</p>
-  </section>
+  <div id="cards" class="grid"></div>
+  <p class="empty" id="cards-empty">Nothing here.</p>
 
   <section id="thin-panel">
     <h2>Needs more examples</h2>

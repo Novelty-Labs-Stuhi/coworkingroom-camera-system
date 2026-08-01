@@ -107,6 +107,27 @@ section { margin-bottom: 2.5rem; }
   font-size: .9rem;
 }
 
+/* One pile at a time, chosen here. With seven of them, stacking made the one being worked
+   through impossible to find -- and each button carries its own size, so the pile worth
+   opening is visible without opening it. */
+.which { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
+.which .pick {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+  font-size: .85rem;
+  padding: .3rem .7rem;
+}
+.which .pick:hover { color: var(--text); border-color: var(--accent); filter: none; }
+.which .pick.chosen { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.which .count { color: inherit; opacity: .8; }
+
+/* A pair is two pictures: the question is whether they belong together, which cannot be
+   judged from one of them. */
+.pair .together .mate { width: 8rem; }
+.pair .together .mate img { opacity: 1; }
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
