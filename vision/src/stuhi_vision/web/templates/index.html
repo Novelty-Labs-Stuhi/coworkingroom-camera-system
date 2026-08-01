@@ -11,26 +11,15 @@
   {% include "nav.html" %}
   <header>
     <h1>Who came through?</h1>
-    <p class="hint">
-      Watch the clip, then give the person a name. Labelling the same clip again
-      changes nothing &mdash; one sighting counts once, however many times you label it.
-    </p>
-    <p class="hint">
-      Counting the wrong part of the picture? <a href="/zones">Redraw the doorframe zone</a>
-      &mdash; that page also says whether a camera has been knocked since you drew it.
-    </p>
+    
+    
   </header>
 
   <section id="people-panel">
     <h2>Enrolled</h2>
     <ul id="people" class="people"></ul>
     <p class="empty" id="people-empty">Nobody yet. The first label creates the gallery.</p>
-    <p class="hint">
-      Click a name to see only that person&rsquo;s frames &mdash; labelled, guessed and
-      flagged alike. Click it again to show everyone.
-      Spelt one wrong? <b>rename</b> corrects it on every clip, in the gallery and in the
-      recorded history at once &mdash; and merges two spellings of the same person into one.
-    </p>
+    
     <p class="result" id="rename-result" role="status"></p>
     <p class="hint" id="showing" role="status" hidden></p>
   </section>
@@ -44,10 +33,7 @@
   <section class="pile" data-pile="unchecked_unknown">
     <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
       Nobody recognised &mdash; needs a name <span class="count"></span></h2>
-    <p class="hint">
-      The system labelled these <b>unknown</b>: it saw a person and matched nobody. Type who
-      it is, or save them as <b>unknown</b> if they are not somebody you want to track.
-    </p>
+    
     <div class="grid"></div>
     <p class="empty">Nothing waiting.</p>
   </section>
@@ -55,9 +41,7 @@
   <section class="pile" data-pile="unchecked_named">
     <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
       Guessed &mdash; needs your check <span class="count"></span></h2>
-    <p class="hint">
-      The system put a name to these. Confirm it, or correct it first and then save.
-    </p>
+    
     <div class="grid"></div>
     <p class="empty">Nothing waiting.</p>
   </section>
@@ -65,10 +49,7 @@
   <section class="pile" data-pile="recheck">
     <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
       Worth rechecking <span class="count"></span></h2>
-    <p class="hint">
-      Saved, but the numbers look odd: a face far from the rest of that person's, or a name
-      used only once &mdash; which is what a typo looks like. Saving again settles it.
-    </p>
+    
     <div class="grid"></div>
     <p class="empty">Nothing to recheck.</p>
   </section>
@@ -76,10 +57,7 @@
   <section class="pile" data-pile="checked_unknown">
     <h2><button type="button" class="fold" aria-expanded="true">&#9662;</button>
       Checked, and unknown <span class="count"></span></h2>
-    <p class="hint">
-      You looked at these and left them as <b>unknown</b> &mdash; a visitor, or nobody worth
-      naming. Kept apart so they do not clutter the people you do track.
-    </p>
+    
     <div class="grid"></div>
     <p class="empty">None.</p>
   </section>
@@ -87,20 +65,14 @@
   <section class="pile" data-pile="checked">
     <h2><button type="button" class="fold" aria-expanded="false">&#9656;</button>
       Everything you have checked <span class="count"></span></h2>
-    <p class="hint">
-      All of it, including the two piles above &mdash; for finding a past sighting rather than
-      working through. Give a different name to correct one.
-    </p>
+    
     <div class="grid"></div>
     <p class="empty">None yet.</p>
   </section>
 
   <section id="thin-panel">
     <h2>Needs more examples</h2>
-    <p class="hint">
-      One or two faces is not enough to recognise someone reliably &mdash; and with two, an
-      odd one out cannot be detected at all. Label a few more clips of these people.
-    </p>
+    
     <ul id="thin" class="people"></ul>
     <p class="empty" id="thin-empty">Everyone has enough.</p>
   </section>
