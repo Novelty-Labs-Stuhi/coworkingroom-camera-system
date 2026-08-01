@@ -22,6 +22,7 @@ the gallery and fixes the review record, but does not rewrite history.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -36,6 +37,9 @@ from .names import parse_names
 from .recognition.gallery import FaceGallery
 
 _INDEX = "index.json"
+
+
+_log = logging.getLogger(__name__)
 
 
 class LabelOutcome(Enum):
@@ -91,6 +95,11 @@ class ReviewRecord:
     # what tell somebody working on the detector what it is actually getting wrong, and a log
     # is rotated within hours.
     rejected_because: str = ""
+    # Who it was, on a picture too poor to learn from. Kept apart from ``labelled_as`` on
+    # purpose: that one means "enrolled under this name", and enrolling a bad picture is
+    # exactly what rejecting it is meant to prevent. This only says who came through, which is
+    # what the time-in-the-room figures need.
+    attributed_to: str = ""
     # A person has looked at this and saved it. It never returns to "worth rechecking":
     # whatever the audit thinks of the numbers, somebody has judged it, and offering it back
     # would be arguing with them for ever.
@@ -104,10 +113,21 @@ class ReviewRecord:
 class ReviewQueue:
     """Disk-backed sightings plus the label/correct operations over the gallery."""
 
-    def __init__(self, directory: Path, gallery: FaceGallery, gallery_dir: Path) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        gallery: FaceGallery,
+        gallery_dir: Path,
+        history=None,
+    ) -> None:
         self._dir = directory
         self._gallery = gallery
         self._gallery_dir = gallery_dir
+        # The event log, so a name corrected here reaches the record the figures are derived
+        # from. Without it the totals keep whatever the system guessed at the time, and no
+        # amount of careful labelling would ever change them. Optional, because labelling works
+        # perfectly well on its own -- it is the *figures* that need this.
+        self._history = history
         self._dir.mkdir(parents=True, exist_ok=True)
         self._records: dict[str, ReviewRecord] = {}
         # Sightings are filed by the pipeline thread and labelled by the chat poller and
@@ -220,6 +240,9 @@ class ReviewQueue:
             **{**asdict(record), "labelled_as": "unknown", "checked": True}
         )
         self._flush()
+        # The crossing becomes unknown too. Leaving the system's guess there would credit
+        # somebody with hours a person has just said belong to nobody.
+        self._correct_history(record, "unknown")
         return LabelOutcome.SET_ASIDE
 
     def label_burst(self, sighting_id: str, names: list[str]) -> list[tuple[str, LabelOutcome]]:
@@ -251,6 +274,20 @@ class ReviewQueue:
             **{**asdict(record), "labelled_as": name, "checked": True}
         )
         self._flush()
+        self._correct_history(record, name)
+
+    def _correct_history(self, record: ReviewRecord, name: str) -> None:
+        """Put this name on the crossing itself, so the presence figures follow the correction.
+
+        Never raises: a label must be recorded even if the history cannot be reached, because
+        the label is the thing being asked for and the figures can be recomputed later.
+        """
+        if self._history is None:
+            return
+        try:
+            self._history.rename_crossing(record.timestamp, record.direction, name)
+        except Exception as exc:
+            _log.error("could not correct the history for %s: %s", record.sighting_id, exc)
 
     # --- queries ------------------------------------------------------------
     def crop_path(self, sighting_id: str) -> Path | None:
@@ -339,12 +376,18 @@ class ReviewQueue:
             for burst, found in members.items()
         }
 
-    def dismiss(self, sighting_id: str, note: str = "") -> LabelOutcome:
+    def dismiss(self, sighting_id: str, note: str = "", name: str = "") -> LabelOutcome:
         """Mark a sighting unusable, removing any reference it contributed.
 
         A back-of-head or blurred capture should stop being offered *and* stop influencing
         recognition. Discarding from the gallery first is the important half: leaving the
         reference behind while hiding the card would keep degrading matches invisibly.
+
+        ``name`` separates two things that were tangled together: *who came through* and *what
+        the recogniser should learn from*. An unusable picture of a known person is still
+        evidence they were there, so the crossing is recorded as them and their hours count --
+        while the picture itself teaches the recogniser nothing, which is the whole point of
+        rejecting it.
         """
         with self._lock:
             record = self._records.get(sighting_id)
@@ -358,13 +401,18 @@ class ReviewQueue:
             self._records[sighting_id] = ReviewRecord(
                 **{
                     **asdict(record),
+                    # Not a label: nothing is enrolled from a rejected picture. Who it was is
+                    # recorded on the crossing instead, where the hours are counted from.
                     "labelled_as": None,
                     "dismissed": True,
                     "rejected_because": note.strip(),
+                    "attributed_to": name.strip(),
                     "checked": True,
                 }
             )
             self._flush()
+            if name.strip():
+                self._correct_history(record, name.strip())
             return LabelOutcome.DISMISSED
 
     def unlabel(self, sighting_id: str) -> LabelOutcome:
@@ -545,6 +593,22 @@ class ReviewQueue:
     def audit(self) -> Audit:
         """Which enrolled faces look wrong, and who has too few examples."""
         return audit(self.references())
+
+    def nearest(self, at: float, direction: str, window: float = 2.0) -> ReviewRecord | None:
+        """The sighting for a crossing at this moment, so a clip can be shown for it.
+
+        Matched on time and direction: the crossing and the sighting were written by different
+        parts of the system and share only those.
+        """
+        with self._lock:
+            candidates = [
+                record
+                for record in self._records.values()
+                if record.direction == direction and abs(record.timestamp - at) <= window
+            ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda record: abs(record.timestamp - at))
 
     def get(self, sighting_id: str) -> ReviewRecord | None:
         with self._lock:

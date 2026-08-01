@@ -1,0 +1,102 @@
+/* The time-in-the-room page. Its own file so it cannot collide with the labelling page's
+   stylesheet, which somebody else may be editing at the same time. It borrows app.css for the
+   shared shell -- colours, buttons, chips -- and adds only what a leaderboard needs. */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+.windows { display: flex; flex-wrap: wrap; gap: .3rem; }
+.window {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+  font-size: .82rem;
+  padding: .2rem .6rem;
+}
+.window:hover { color: var(--text); border-color: var(--accent); filter: none; }
+.window.chosen { color: var(--accent); border-color: var(--accent); }
+
+/* Stepping back through past periods. The label between the arrows says which one is shown,
+   because "week" with no dates cannot be told from last week. */
+.stepping { display: flex; align-items: center; gap: .5rem; font-size: .85rem; color: var(--muted); }
+.stepping button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+  font-size: .8rem;
+  padding: .2rem .5rem;
+}
+.stepping button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); filter: none; }
+
+#search {
+  margin-left: auto;
+  padding: .35rem .6rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .9rem;
+  min-width: 9rem;
+}
+#search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* One row per person: place, name, time, and what the time is made of. The time is the point,
+   so it is the only thing in the row that is emphasised. */
+.board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .35rem; }
+.board li {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .45rem .7rem;
+}
+.rank { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.5rem; }
+.board .who {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.board .who:hover { color: var(--accent); filter: none; }
+.held { margin-left: auto; color: var(--ok); font-variant-numeric: tabular-nums; }
+.detail { color: var(--muted); font-size: .8rem; }
+.here {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  border-radius: 4px;
+  padding: 0 .35rem;
+  font-size: .72rem;
+}
+
+/* One person's visits, and the entries the record still has open. Plain lines: they are read
+   in order, not compared, so a table would add furniture without adding meaning. */
+.visits { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .3rem; }
+.visits li {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .88rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.visits .who { font-weight: 600; }
+
+/* The still from the entry that may carry the wrong name. Small: it is there to recognise the
+   person by, not to label from -- labelling happens on the other page. */
+.entry-face { height: 2.6rem; border-radius: 4px; margin-left: auto; }
+
+#person-panel h2 { display: flex; align-items: center; gap: .6rem; }
+#person-panel h3 { font-size: .95rem; margin: 1.2rem 0 .4rem; }

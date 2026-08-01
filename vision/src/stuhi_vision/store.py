@@ -72,6 +72,32 @@ class EventStore:
             self._conn.commit()
             return cursor.rowcount
 
+    def rename_crossing(self, at: float, direction: str, name: str, window: float = 1.0) -> int:
+        """Put a corrected name on the one crossing a sighting is about.
+
+        The figures on the leaderboard come from this log, so a label corrected by hand has to
+        reach it -- otherwise the totals keep whatever the system guessed at the time, and no
+        amount of careful labelling would ever change them.
+
+        Matched on the moment and the direction, because the sighting and the event were
+        written by different parts of the system and share only those. A second either side:
+        two crossings the same way within a second are the same passage.
+        """
+        with self._lock:
+            cursor = self._conn.execute(
+                _sql("rename_one_event.sql"), (name, direction, at - window, at + window)
+            )
+            self._conn.commit()
+            return cursor.rowcount
+
+    def passages(self) -> list[tuple[str, float, str]]:
+        """Every crossing: who, when, which way. What the presence figures are derived from."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, timestamp, direction FROM events ORDER BY timestamp"
+            ).fetchall()
+        return [(name, float(at), direction) for name, at, direction in rows]
+
     def recent(self, limit: int = 50) -> list[tuple[float, str, str, str]]:
         with self._lock:
             rows = self._conn.execute(_sql("recent_events.sql"), (limit,)).fetchall()

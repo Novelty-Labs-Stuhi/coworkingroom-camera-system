@@ -396,3 +396,93 @@ def test_a_sighting_with_no_face_can_still_be_set_aside(tmp_path) -> None:
 
     assert review.label(faceless, "somebody") is LabelOutcome.NO_FACE
     assert review.label(faceless, "unknown") is LabelOutcome.SET_ASIDE
+
+
+class FakeHistory:
+    """The event log, only as much of it as a corrected label touches."""
+
+    def __init__(self) -> None:
+        self.renamed: list[tuple[float, str, str]] = []
+
+    def rename_crossing(self, at: float, direction: str, name: str, window: float = 1.0) -> int:
+        self.renamed.append((at, direction, name))
+        return 1
+
+
+def test_a_corrected_label_reaches_the_crossing_it_is_about(tmp_path) -> None:
+    """The time-in-the-room figures come from the crossings, not from the review records.
+
+    Without this the totals keep whatever the system guessed at the time, and no amount of
+    careful labelling would ever change them.
+    """
+    history = FakeHistory()
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery", history)
+    sighting_id = review.record(_sighting())
+
+    review.label(sighting_id, "ilari")
+
+    assert history.renamed == [(1_760_000_000.0, "in", "ilari")]
+
+
+def test_setting_aside_makes_the_crossing_unknown_too(tmp_path) -> None:
+    """Leaving the guess there would credit somebody with hours nobody claims."""
+    history = FakeHistory()
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery", history)
+    guessed = review.record(_sighting(name="art", outcome=Outcome.NAMED))
+
+    review.label(guessed, "unknown")
+
+    assert history.renamed[-1] == (1_760_000_000.0, "in", "unknown")
+
+
+def test_a_label_is_still_recorded_when_the_history_cannot_be_reached(tmp_path) -> None:
+    """The label is what was asked for; the figures can be recomputed from the log later."""
+
+    class Broken:
+        def rename_crossing(self, *args, **kwargs):
+            raise RuntimeError("database is locked")
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery", Broken())
+    sighting_id = review.record(_sighting())
+
+    assert review.label(sighting_id, "ilari") is LabelOutcome.ENROLLED
+    assert review.get(sighting_id).labelled_as == "ilari"
+
+
+def test_rejecting_with_a_name_records_who_it_was_without_enrolling_them(tmp_path) -> None:
+    """Two different things: who came through, and what the recogniser should learn from.
+
+    An unusable picture of a known person is still evidence they were there.
+    """
+    history = FakeHistory()
+    gallery = FaceGallery()
+    review = ReviewQueue(tmp_path / "review", gallery, tmp_path / "gallery", history)
+    blurred = review.record(_sighting())
+
+    review.dismiss(blurred, "motion blur, but that is clearly him", name="ilari")
+
+    assert gallery.counts() == {}                       # nothing to learn from
+    assert review.get(blurred).labelled_as is None      # not enrolled under anybody
+    assert review.get(blurred).attributed_to == "ilari"  # but we know who it was
+    assert history.renamed == [(1_760_000_000.0, "in", "ilari")]   # so the hours count
+
+
+def test_rejecting_a_previously_enrolled_face_still_withdraws_it(tmp_path) -> None:
+    review, gallery = _queue(tmp_path)
+    mislabelled = review.record(_sighting())
+    review.label(mislabelled, "ilari")
+
+    review.dismiss(mislabelled, "back of a head", name="ilari")
+
+    assert gallery.counts() == {}
+
+
+def test_rejecting_with_no_name_leaves_the_crossing_alone(tmp_path) -> None:
+    """A rejection that names nobody is not a claim about who came through."""
+    history = FakeHistory()
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery", history)
+    rubbish = review.record(_sighting())
+
+    review.dismiss(rubbish, "that is the door swinging")
+
+    assert history.renamed == []

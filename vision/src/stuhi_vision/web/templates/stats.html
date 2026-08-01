@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stuhi &mdash; time in the room</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ assets }}">
+  <link rel="stylesheet" href="/static/stats.css?v={{ assets }}">
+</head>
+<body>
+  <header>
+    <h1>Time in the room</h1>
+    <p class="hint">
+      Counted from the entries and exits themselves, so a name you correct changes these
+      figures at once. The day starts at <b>04:30</b> &mdash; somebody here at one in the
+      morning is finishing the previous day, not starting a new one.
+      <a href="/">Back to labelling</a>
+    </p>
+  </header>
+
+  <section id="board-panel">
+    <div class="controls">
+      <div class="windows" id="windows">
+        <button type="button" class="window chosen" data-window="streak">current streak</button>
+        <button type="button" class="window" data-window="day">today</button>
+        <button type="button" class="window" data-window="week">week</button>
+        <button type="button" class="window" data-window="month">month</button>
+        <button type="button" class="window" data-window="year">year</button>
+        <button type="button" class="window" data-window="all">all time</button>
+      </div>
+      <div class="stepping">
+        <button type="button" id="earlier" title="the window before this one">&#9666; earlier</button>
+        <span id="covering"></span>
+        <button type="button" id="later" title="the window after this one">later &#9656;</button>
+      </div>
+      <input type="search" id="search" placeholder="find a name" autocomplete="off"
+             spellcheck="false">
+    </div>
+
+    <ol id="board" class="board"></ol>
+    <p class="empty" id="board-empty">Nobody appeared in this period.</p>
+  </section>
+
+  <section id="person-panel" hidden>
+    <h2><span id="person-name"></span>
+      <button type="button" id="close-person" class="reject">close</button></h2>
+    <ul id="person-totals" class="people"></ul>
+    <h3>Visits</h3>
+    <ol id="person-visits" class="visits"></ol>
+  </section>
+
+  <section id="inside-panel">
+    <h2>Still inside, by the record <span class="count" id="inside-count"></span></h2>
+    <p class="hint">
+      Entries with no exit after them. An exit can only belong to somebody who came in and has
+      not left &mdash; so if a name cannot be corrected because the person is not in the room,
+      the wrong entry is necessarily one of these. Open its clip and fix that one.
+    </p>
+    <ol id="inside" class="visits"></ol>
+    <p class="empty" id="inside-empty">The record has nobody inside.</p>
+  </section>
+
+  <script src="/static/stats.js?v={{ assets }}"></script>
+</body>
+</html>

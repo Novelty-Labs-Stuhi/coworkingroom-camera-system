@@ -15,6 +15,7 @@ Markup and styling live in ``templates/`` and ``static/`` rather than in Python 
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,15 @@ from pydantic import BaseModel
 from starlette.requests import Request
 
 from ..names import parse_names
+from ..presence import (
+    Passage,
+    leaderboard,
+    readable,
+    streaks,
+    unclosed,
+    visits_from,
+    window_bounds,
+)
 from ..review import ReviewQueue
 from ..zones import DrawnZone, ZoneStore
 
@@ -53,6 +63,9 @@ class DismissRequest(BaseModel):
     # Why, in the rejecter's own words. Optional, because a rejection with no reason still
     # has to be possible -- demanding one would mean bad clips left in the gallery.
     note: str = ""
+    # Who it was, if you know despite the picture being unusable. Their hours still count; the
+    # picture still teaches the recogniser nothing.
+    name: str = ""
 
 
 class RenameRequest(BaseModel):
@@ -80,6 +93,7 @@ def _as_dict(record, groups: dict[int, list[str]] | None = None) -> dict:
         # Why it was rejected, if it was. Kept in the record so somebody working on the
         # detector can read what it is actually getting wrong.
         "rejected_because": record.rejected_because,
+        "attributed_to": record.attributed_to,
         "dismissed": record.dismissed,
         "checked": record.checked,
         "direction": record.direction,
@@ -148,6 +162,109 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
             "group": [{"id": id_, "outcome": result.value} for id_, result in results],
         }
     )
+
+
+def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
+    """Time in the room, and the unclosed entries a correction may need to reach.
+
+    Derived from the crossings each time rather than kept as totals: a corrected name changes
+    the answer, and a stored total would be wrong until somebody remembered to rebuild it.
+    """
+
+    def visits():
+        return visits_from(
+            Passage(name=name, at=at, direction=direction)
+            for name, at, direction in history.passages()
+        )
+
+    @app.get("/api/leaderboard")
+    def board(window: str = "week", offset: int = 0) -> JSONResponse:
+        """Who spent the longest in the room, over one window, ``offset`` windows back."""
+        now = time.time()
+        found = visits()
+        if window == "streak":
+            standings = streaks(found, now)
+            start, end = 0.0, now
+        else:
+            start, end = window_bounds(window, offset, now)
+            standings = leaderboard(found, start, end, now)
+        return JSONResponse(
+            {
+                "window": window,
+                "offset": offset,
+                "from": start,
+                "until": end,
+                # Empty until the first such window has passed: a month's board on its second
+                # day says less than nothing, because it looks like a month's worth.
+                "complete": window in ("all", "streak") or offset > 0 or end >= start,
+                "standings": [
+                    {
+                        "name": standing.name,
+                        "seconds": round(standing.seconds, 1),
+                        "readable": (
+                            f"{int(standing.seconds)} day(s)"
+                            if window == "streak"
+                            else readable(standing.seconds)
+                        ),
+                        "visits": standing.visits,
+                        "days": standing.days,
+                        "still_inside": standing.still_inside,
+                    }
+                    for standing in standings
+                ],
+            }
+        )
+
+    @app.get("/api/person/{name}")
+    def person(name: str) -> JSONResponse:
+        """One person's own figures, and every visit behind them."""
+        now = time.time()
+        found = [visit for visit in visits() if visit.name == name]
+        totals = {}
+        for window in ("day", "week", "month", "year", "all"):
+            start, end = window_bounds(window, 0, now)
+            held = sum(visit.overlap(start, end, now) for visit in found)
+            totals[window] = {"seconds": round(held, 1), "readable": readable(held)}
+        run = next((s.seconds for s in streaks(found, now) if s.name == name), 0.0)
+        return JSONResponse(
+            {
+                "name": name,
+                "totals": totals,
+                "streak_days": int(run),
+                "inside": any(visit.left is None for visit in found),
+                "visits": [
+                    {
+                        "entered": visit.entered,
+                        "left": visit.left,
+                        "seconds": round(visit.seconds(now), 1),
+                        "readable": readable(visit.seconds(now)),
+                    }
+                    for visit in sorted(found, key=lambda v: -v.entered)[:200]
+                ],
+            }
+        )
+
+    @app.get("/api/inside")
+    def inside() -> JSONResponse:
+        """Entries with no exit after them, newest first, with the clip for each.
+
+        What to look at when a correction is impossible: an exit can only belong to somebody
+        the record has inside, so naming one otherwise means an earlier *entry* carries the
+        wrong name -- and that mistake is necessarily one of these.
+        """
+        open_visits = sorted(unclosed(visits()), key=lambda visit: -visit.entered)
+        listed = []
+        for visit in open_visits:
+            record = review.nearest(visit.entered, "in")
+            listed.append(
+                {
+                    "name": visit.name,
+                    "entered": visit.entered,
+                    "for": readable(visit.seconds(time.time())),
+                    "sighting_id": record.sighting_id if record else None,
+                }
+            )
+        return JSONResponse({"inside": listed})
 
 
 def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
@@ -234,7 +351,7 @@ def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -
     @app.post("/api/dismiss")
     def dismiss(body: DismissRequest) -> JSONResponse:
         """Reject a sighting: stop offering it, and remove any reference it contributed."""
-        outcome = review.dismiss(body.sighting_id, body.note)
+        outcome = review.dismiss(body.sighting_id, body.note, body.name)
         if not outcome.succeeded:
             raise HTTPException(status_code=404, detail=outcome.value)
         return JSONResponse({"outcome": outcome.value, "people": review.counts()})
@@ -382,6 +499,12 @@ def create_app(
             request, "index.html", {"assets": _asset_version()}
         )
 
+    @app.get("/stats")
+    def stats_page(request: Request):
+        return templates.TemplateResponse(
+            request, "stats.html", {"assets": _asset_version()}
+        )
+
     @app.get("/zones")
     def zones_page(request: Request):
         return templates.TemplateResponse(
@@ -390,6 +513,8 @@ def create_app(
 
     _add_api_routes(app, review)
     _add_correction_routes(app, review, history, ledger)
+    if history is not None:
+        _add_presence_routes(app, review, history)
     _add_media_routes(app, review)
     if frames is not None and zones is not None:
         _add_camera_routes(app, frames, zones, drift or {})

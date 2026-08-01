@@ -149,7 +149,14 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         faces=gallery.rank,
         face_similarity=thresholds.exit_face_match,
     )
-    review = ReviewQueue(config.paths.review_dir, gallery, config.paths.gallery_dir)
+    review = ReviewQueue(
+        config.paths.review_dir,
+        gallery,
+        config.paths.gallery_dir,
+        # So a corrected label reaches the crossing itself, which is what the time-in-the-room
+        # figures are derived from.
+        history=store,
+    )
 
     notifier: TelegramNotifier | None = None
     if config.telegram.enabled:
