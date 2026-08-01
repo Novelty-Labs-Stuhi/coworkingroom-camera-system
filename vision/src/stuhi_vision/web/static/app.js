@@ -4,6 +4,7 @@ const MESSAGES = {
   unchanged: ['same', 'Already that name — nothing added.'],
   dismissed: ['same', 'Rejected — removed from the gallery.'],
   set_aside: ['ok', 'Saved as unknown — checked, and enrolled under nobody.'],
+  attributed: ['ok', 'Saved — no usable face here, so the name counts but teaches nothing.'],
   unlabelled: ['same', 'Label removed — back in the queue.'],
 };
 

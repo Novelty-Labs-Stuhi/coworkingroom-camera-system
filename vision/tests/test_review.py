@@ -71,12 +71,14 @@ def test_unknown_id_is_refused(tmp_path) -> None:
     assert queue.label("2020-01-01_00-00-00", "ilari") is LabelOutcome.UNKNOWN_ID
 
 
-def test_sighting_without_a_face_cannot_be_enrolled(tmp_path) -> None:
+def test_sighting_without_a_face_teaches_the_recogniser_nothing(tmp_path) -> None:
+    """The name is kept -- they were there -- but there is no face to enrol from."""
     queue, gallery = _queue(tmp_path)
     sighting_id = queue.record(_sighting(face_embedding=None, outcome=Outcome.UNIDENTIFIED))
 
-    assert queue.label(sighting_id, "ilari") is LabelOutcome.NO_FACE
+    assert queue.label(sighting_id, "ilari") is LabelOutcome.ATTRIBUTED
     assert gallery.counts() == {}
+    assert queue.get(sighting_id).attributed_to == "ilari"
 
 
 def test_pending_lists_only_enrollable_unlabelled_sightings(tmp_path) -> None:
@@ -394,7 +396,7 @@ def test_a_sighting_with_no_face_can_still_be_set_aside(tmp_path) -> None:
     faceless = review.record(_sighting(embedding=None))
     (tmp_path / "review" / f"{faceless}.npy").unlink(missing_ok=True)
 
-    assert review.label(faceless, "somebody") is LabelOutcome.NO_FACE
+    assert review.label(faceless, "somebody") is LabelOutcome.ATTRIBUTED
     assert review.label(faceless, "unknown") is LabelOutcome.SET_ASIDE
 
 
@@ -486,3 +488,22 @@ def test_rejecting_with_no_name_leaves_the_crossing_alone(tmp_path) -> None:
     review.dismiss(rubbish, "that is the door swinging")
 
     assert history.renamed == []
+
+
+def test_a_crossing_with_no_usable_face_can_still_be_named(tmp_path) -> None:
+    """Ninety-seven waiting sightings had no face vector; saving a name on one was refused.
+
+    The card could never leave the queue -- the only way past it was to reject the clip. Who
+    came through and what the recogniser learns from are different things: the crossing is
+    recorded as this person, and nothing is enrolled, because there is nothing to enrol.
+    """
+    review, gallery = _queue(tmp_path)
+    faceless = review.record(_sighting())
+    (tmp_path / "review" / f"{faceless}.npy").unlink()
+
+    assert review.label(faceless, "Aiush") is LabelOutcome.ATTRIBUTED
+
+    assert gallery.counts() == {}                       # nothing to learn from
+    assert review.get(faceless).attributed_to == "Aiush"  # but we know who it was
+    assert review.get(faceless).checked is True
+    assert [r.sighting_id for r in review.piles()["unchecked_unknown"]] == []

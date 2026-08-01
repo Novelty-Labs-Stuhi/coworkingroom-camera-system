@@ -58,6 +58,9 @@ class LabelOutcome(Enum):
     # the recogniser was unsure about. What it does mean is that somebody has looked, which
     # is why it counts as checked and leaves the queue.
     SET_ASIDE = "set_aside"
+    # Named, but nothing enrolled: the crossing had no usable face, so who it was is recorded
+    # and the recogniser learns nothing. Refusing instead left the card stuck in the queue.
+    ATTRIBUTED = "attributed"
 
     @property
     def succeeded(self) -> bool:
@@ -68,6 +71,7 @@ class LabelOutcome(Enum):
             LabelOutcome.DISMISSED,
             LabelOutcome.UNLABELLED,
             LabelOutcome.SET_ASIDE,
+            LabelOutcome.ATTRIBUTED,
         )
 
 
@@ -206,7 +210,7 @@ class ReviewQueue:
                 return self._set_aside(record)
             embedding_path = self._dir / f"{sighting_id}.npy"
             if not embedding_path.exists():
-                return LabelOutcome.NO_FACE
+                return self._attribute(record, name)
 
             previous = record.labelled_as
             embedding = np.load(embedding_path)
@@ -225,6 +229,23 @@ class ReviewQueue:
             self._gallery.save(self._gallery_dir)
             self._remember(record, name)
             return LabelOutcome.CORRECTED if previous is not None else LabelOutcome.ENROLLED
+
+    def _attribute(self, record: ReviewRecord, name: str) -> LabelOutcome:
+        """Record who somebody says this was, when there is no face to enrol from it.
+
+        Ninety-seven of the sightings waiting had no face vector -- crossings where a person
+        was seen but no usable face was. Saving a name on one was refused outright, so the card
+        could never leave the queue: the only way past it was to reject the clip.
+
+        Who came through and what the recogniser should learn from are different things. The
+        crossing is recorded as this person, so their hours count; nothing is enrolled, because
+        there is nothing to enrol. Same field the reject path uses for the same reason.
+        """
+        self._records[record.sighting_id] = ReviewRecord(
+            **{**asdict(record), "attributed_to": name.strip(), "checked": True}
+        )
+        self._flush()
+        return LabelOutcome.ATTRIBUTED
 
     def _set_aside(self, record: ReviewRecord) -> LabelOutcome:
         """Save a sighting as nobody in particular: checked, but enrolled under no name.
