@@ -1,0 +1,8 @@
+{# The three pages, on every page. Kept as its own partial so adding or renaming one is a
+   single edit, and so the pages themselves stay about what they are for. `page` says which
+   one is showing, so the current tab can look current rather than like somewhere to go. #}
+<nav class="pages">
+  <a href="/" class="{{ 'here' if page == 'label' else '' }}">Labelling</a>
+  <a href="/stats" class="{{ 'here' if page == 'stats' else '' }}">Time in the room</a>
+  <a href="/zones" class="{{ 'here' if page == 'zones' else '' }}">Camera zones</a>
+</nav>

@@ -1,0 +1,33 @@
+/* The bar that switches between the three pages.
+   Its own file so adding it to a page is one line and touches nobody else's stylesheet --
+   these pages are worked on separately, sometimes at the same time. */
+
+.pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+  margin: 0 0 1.5rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: .5rem;
+}
+
+.pages a {
+  padding: .3rem .8rem;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .9rem;
+}
+
+.pages a:hover { color: var(--text); background: var(--panel); }
+
+/* The page you are on is not somewhere to go, so it reads as a label rather than a link. */
+.pages a.here {
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-bottom-color: var(--panel);
+  margin-bottom: -.55rem;
+  font-weight: 600;
+  cursor: default;
+}

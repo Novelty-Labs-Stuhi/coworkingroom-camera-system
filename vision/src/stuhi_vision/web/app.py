@@ -496,19 +496,19 @@ def create_app(
     @app.get("/")
     def index(request: Request):
         return templates.TemplateResponse(
-            request, "index.html", {"assets": _asset_version()}
+            request, "index.html", {"assets": _asset_version(), "page": "label"}
         )
 
     @app.get("/stats")
     def stats_page(request: Request):
         return templates.TemplateResponse(
-            request, "stats.html", {"assets": _asset_version()}
+            request, "stats.html", {"assets": _asset_version(), "page": "stats"}
         )
 
     @app.get("/zones")
     def zones_page(request: Request):
         return templates.TemplateResponse(
-            request, "zones.html", {"assets": _asset_version()}
+            request, "zones.html", {"assets": _asset_version(), "page": "zones"}
         )
 
     _add_api_routes(app, review)

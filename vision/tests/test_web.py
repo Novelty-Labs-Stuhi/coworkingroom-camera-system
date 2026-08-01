@@ -269,3 +269,28 @@ def test_a_lone_crossing_carries_no_group(tmp_path) -> None:
     entry = TestClient(create_app(review)).get("/api/sightings").json()["unchecked_unknown"][0]
     assert entry["group_ids"] == []
     assert entry["group_size"] == 1
+
+
+def test_every_page_carries_the_bar_and_marks_the_one_you_are_on(tmp_path) -> None:
+    """Three pages worked on separately still have to be one thing to use."""
+    from starlette.testclient import TestClient
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+    from stuhi_vision.review import ReviewQueue
+    from stuhi_vision.web.app import create_app
+
+    review = ReviewQueue(tmp_path / "review", FaceGallery(), tmp_path / "gallery")
+    client = TestClient(create_app(review))
+
+    pages = (
+        ("/", "Labelling"),
+        ("/stats", "Time in the room"),
+        ("/zones", "Camera zones"),
+    )
+    for path, here in pages:
+        body = client.get(path).text
+        assert 'class="pages"' in body
+        for link in ("/stats", "/zones"):
+            assert f'href="{link}"' in body
+        # The page you are on reads as a label rather than somewhere to go.
+        assert f'class="here">{here}' in body
