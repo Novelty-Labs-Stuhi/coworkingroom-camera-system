@@ -141,6 +141,11 @@ class FaceGallery:
         with self._lock:
             return {name: len(vectors) for name, vectors in sorted(self._references.items())}
 
+    def references_for(self, name: str) -> list:
+        """Every reference held under one name. A copy, so callers cannot mutate the set."""
+        with self._lock:
+            return list(self._references.get(name, []))
+
     @property
     def names(self) -> list[str]:
         with self._lock:

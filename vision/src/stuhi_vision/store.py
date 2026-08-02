@@ -83,6 +83,31 @@ class EventStore:
             self._conn.commit()
             return cursor.rowcount
 
+    def events_named(self, name: str) -> list[int]:
+        """The ids of every crossing carrying this name."""
+        with self._lock:
+            rows = self._conn.execute(_sql("events_named.sql"), (name,)).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def rename_events(self, ids: list[int], name: str) -> int:
+        """Put a name on specific rows, given by id. Returns how many changed.
+
+        By id rather than by old name, because a merge writes down the rows it is about to
+        change *before* changing them -- that record is what makes it reversible, and it is
+        only trustworthy if the same rows are the ones actually rewritten. Renaming by the
+        old name again here would silently sweep in any crossing recorded in between.
+        """
+        if not ids:
+            return 0
+        with self._lock:
+            changed = 0
+            for event_id in ids:
+                changed += self._conn.execute(
+                    _sql("rename_events_by_id.sql"), (name, event_id)
+                ).rowcount
+            self._conn.commit()
+            return changed
+
     def rename_crossing(self, at: float, direction: str, name: str, window: float = 1.0) -> int:
         """Put a corrected name on the one crossing a sighting is about.
 

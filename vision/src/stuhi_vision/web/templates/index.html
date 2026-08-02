@@ -24,21 +24,35 @@
     <p class="hint" id="showing" role="status" hidden></p>
   </section>
 
+  <!-- Two sections, because the piles answer two different questions. The first is work the
+       system is asking for: somebody it could not name, or something it can see does not add
+       up. It is also the only section that sends a message to the chat. The second is
+       everything already dealt with, which is for looking things up rather than working
+       through, and pulling it apart from the first is what stops the queue that matters
+       being buried among seven equal-looking buttons. -->
   <nav id="which" class="which">
-    <button type="button" class="pick chosen" data-pile="unchecked_unknown">
-      Needs a name <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="unchecked_named">
-      Guessed <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="recheck">
-      Worth rechecking <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="checked_unknown">
-      Left unknown <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="checked">
-      All checked <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="renamed_exits">
-      Exits the room renamed <span class="count"></span></button>
-    <button type="button" class="pick" data-pile="missing_exits">
-      Came in, never left <span class="count"></span></button>
+    <div class="group" data-group="attention">
+      <h2>Needs you</h2>
+      <button type="button" class="pick chosen" data-pile="unnamed">
+        Nobody has named them <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="recheck">
+        Suspect faces <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="missing_exits">
+        Came in, never left <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="renamed_exits">
+        Exits the room renamed <span class="count"></span></button>
+    </div>
+    <div class="group" data-group="rest">
+      <h2>Everything else</h2>
+      <button type="button" class="pick" data-pile="unchecked_named">
+        Guessed <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="unchecked_unknown">
+        Unknown sightings <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="checked_unknown">
+        Left unknown <span class="count"></span></button>
+      <button type="button" class="pick" data-pile="checked">
+        All checked <span class="count"></span></button>
+    </div>
   </nav>
 
   <p class="hint" id="about-pile"></p>

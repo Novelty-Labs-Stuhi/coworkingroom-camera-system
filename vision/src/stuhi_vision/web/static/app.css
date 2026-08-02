@@ -110,7 +110,29 @@ section { margin-bottom: 2.5rem; }
 /* One pile at a time, chosen here. With seven of them, stacking made the one being worked
    through impossible to find -- and each button carries its own size, so the pile worth
    opening is visible without opening it. */
-.which { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
+/* Two groups, stacked. The buttons used to be one flat row of seven, which said that
+   confirming a guess a week old mattered as much as naming somebody nobody has named. The
+   heading and the rule between them are doing that work now. */
+.which { display: block; margin: 0 0 .75rem; }
+.which .group { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
+.which .group + .group {
+  margin-top: .6rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--line);
+}
+.which .group h2 {
+  flex: 0 0 100%;
+  margin: 0 0 .1rem;
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The section that is asking for something is the one to look at first, so it says so
+   without needing the counts read. */
+.which .group[data-group="attention"] h2 { color: var(--accent); }
+.which .group[data-group="rest"] .pick { font-size: .8rem; opacity: .85; }
 .which .pick {
   background: transparent;
   border: 1px solid var(--line);

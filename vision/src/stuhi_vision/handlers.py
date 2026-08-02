@@ -16,7 +16,9 @@ It returns a :class:`~.domain.Sighting` carrying the evidence -- score, outcome,
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from .domain import Crossing, Direction, Outcome, Sighting
 from .identity import Decision
@@ -25,6 +27,21 @@ from .sessions import SessionManager, TrackSession
 from .witness import LeavingWitness
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class Enrolment:
+    """Where a newly invented identity is written.
+
+    The three travel together and are meaningless apart: a face enrolled without its name
+    recorded as provisional looks like somebody a human chose, and a name recorded without
+    the face enrolled cannot be matched again. Grouping them says that, and keeps the
+    Doorkeeper's signature about what it does rather than about where things are kept.
+    """
+
+    gallery: object | None = None
+    directory: Path | None = None
+    provisional: object | None = None
 
 
 class Doorkeeper:
@@ -37,8 +54,7 @@ class Doorkeeper:
         min_track_age: int,
         camera: str = "",
         witness: LeavingWitness | None = None,
-        gallery=None,
-        gallery_dir=None,
+        enrolment: Enrolment | None = None,
     ) -> None:
         self._sessions = sessions
         self._ledger = ledger
@@ -47,8 +63,9 @@ class Doorkeeper:
         self._witness = witness
         # Where a new identity's face goes. Without it an unrecognised person is unrecognisable
         # again next time, so they can never be matched on the way out.
-        self._gallery = gallery
-        self._gallery_dir = gallery_dir
+        # Where an unrecognised arrival's identity is written. Without it they are
+        # unrecognisable again next time, so they can never be matched on the way out.
+        self._enrolment = enrolment or Enrolment()
 
     def commit(self, crossing: Crossing) -> Sighting | None:
         """Apply a crossing; returns the sighting, or ``None`` if it was rejected."""
@@ -63,8 +80,9 @@ class Doorkeeper:
             return None
 
         decision = session.identity.decide()
+        introduced = False
         if crossing.direction is Direction.IN:
-            name = self._enter(session, decision, crossing.timestamp)
+            name, introduced = self._enter(session, decision, crossing.timestamp)
         else:
             name = self._exit(session, decision, crossing.timestamp)
 
@@ -74,21 +92,30 @@ class Doorkeeper:
             name=name,
             score=decision.score,
             outcome=decision.outcome,
+            introduced=introduced,
             face_embedding=session.face_embedding,
             face_crop=session.face_crop,
         )
 
-    def _enter(self, session: TrackSession, decision: Decision, timestamp: float) -> str:
-        """Somebody came in. Recognised or not, they get an identity that lasts."""
+    def _enter(
+        self, session: TrackSession, decision: Decision, timestamp: float
+    ) -> tuple[str, bool]:
+        """Somebody came in. Recognised or not, they get an identity that lasts.
+
+        Returns the name and whether this crossing *invented* it -- the one moment worth
+        interrupting a human for, and the only one that happens exactly once per person.
+        """
         if decision.outcome is Outcome.NAMED:
             name = decision.name
+            introduced = False
         else:
             name = self._someone_new(session, timestamp)
+            introduced = True
         embedding = session.entry_embedding
         if embedding is None:
             embedding = session.body_embedding  # no face frame; use the sharpest body
         self._ledger.enter(name, embedding, timestamp, self._camera)
-        return name
+        return name, introduced
 
     def _someone_new(self, session: TrackSession, timestamp: float) -> str:
         """A fresh identity for somebody nobody recognised -- and *enrol their face under it*.
@@ -104,10 +131,13 @@ class Doorkeeper:
         exit can be attributed, and it can later be given a real name or merged into one.
         """
         name = f"guest-{datetime.fromtimestamp(timestamp).strftime('%m%d-%H%M%S')}"
-        if session.face_embedding is not None and self._gallery is not None:
-            self._gallery.add(name, session.face_embedding)
-            self._gallery.save(self._gallery_dir)
+        gallery = self._enrolment.gallery
+        if session.face_embedding is not None and gallery is not None:
+            gallery.add(name, session.face_embedding)
+            gallery.save(self._enrolment.directory)
             _log.info("%s enrolled %s as somebody new", self._camera, name)
+        if self._enrolment.provisional is not None:
+            self._enrolment.provisional.add(name)
         return name
 
     def _exit(self, session: TrackSession, decision: Decision, timestamp: float) -> str | None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from stuhi_vision.domain import Crossing, Direction, Outcome
-from stuhi_vision.handlers import Doorkeeper, Identifier
+from stuhi_vision.handlers import Doorkeeper, Enrolment, Identifier
 from stuhi_vision.ledger import Ledger
 from stuhi_vision.witness import LeavingWitness
 
@@ -173,8 +173,7 @@ def test_an_unrecognised_arrival_gets_an_identity_that_lasts(tmp_path) -> None:
         FakeSessions(session),
         ledger,
         min_track_age=2,
-        gallery=gallery,
-        gallery_dir=tmp_path / "gallery",
+        enrolment=Enrolment(gallery, tmp_path / "gallery"),
     )
     sighting = door.commit(_crossing(Direction.IN, timestamp=1_785_600_000.0))
 

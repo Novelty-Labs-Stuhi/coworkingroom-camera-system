@@ -35,6 +35,11 @@ class Hooks:
 
     announce: Announcer | None = None
     on_frame: FrameObserver | None = None
+    # Called once per frame with nothing to say, for work that must happen on a clock rather
+    # than on an event -- emptying the room at the office-day boundary. It hangs off the
+    # frame loop deliberately: a timer thread that dies takes its schedule silently with it,
+    # whereas if frames stop arriving the pipeline is already broken in a louder way.
+    tick: Callable[[], None] | None = None
 
 
 class Pipeline:
@@ -58,6 +63,7 @@ class Pipeline:
         hooks = hooks or Hooks()
         self._announce = hooks.announce or (lambda sighting: None)
         self._on_frame = hooks.on_frame
+        self._beat = hooks.tick or (lambda: None)
         self._attention = attention
         self._examined = 0
 
@@ -66,6 +72,7 @@ class Pipeline:
             self._run_attentively()
             return
         for frame_index, frame in enumerate(self._source):
+            self._beat()
             people = self._tracker.update(frame)
             if people is None:
                 # The frame was never examined (motion gate). Touch no per-track state:
@@ -92,6 +99,7 @@ class Pipeline:
         pixels: it is the cheap half, and it is what decides when the expensive half wakes.
         """
         for frame in self._source:
+            self._beat()
             people = self._examine(frame)
             crossings = self._doorway.update(people, frame)
             for crossing in crossings:

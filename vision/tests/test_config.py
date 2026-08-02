@@ -198,9 +198,11 @@ role = "identify"
     shared = SimpleNamespace(
         ledger=object(),
         witness=LeavingWitness(),
-        # A new identity's face is enrolled the moment somebody unrecognised walks in.
+        # A new identity's face is enrolled the moment somebody unrecognised walks in, and
+        # its invented name recorded as awaiting a human's.
         gallery=None,
         gallery_dir=tmp_path / "gallery",
+        provisional=None,
     )
     assert isinstance(_committer(counter, object(), shared, 2), Doorkeeper)
     assert isinstance(_committer(namer, object(), shared, 2), Identifier)

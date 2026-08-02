@@ -16,16 +16,21 @@ from .alignment import DriftWatch
 from .attention import Attention
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
+from .continuity import RESET, DayBoundary, open_visits, partition, start_of_day
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
-from .handlers import Doorkeeper, Identifier
+from .handlers import Doorkeeper, Enrolment, Identifier
+from .heartbeat import Heartbeat
 from .latest import LatestFrames
 from .ledger import Ledger
+from .merges import MergeLog
 from .notify import TelegramNotifier
 from .occlusion import Occlusion
 from .passage import PassageMonitor
 from .pipeline import FrameObserver, Hooks, Pipeline
+from .presence import office_day
+from .provisional import Provisional
 from .publishing import Publication, SightingPublisher
 from .recognition.body import BodyEmbedder
 from .recognition.face import FaceRecognizer
@@ -45,6 +50,9 @@ from .witness import LeavingWitness
 from .zones import ZoneStore
 
 _log = logging.getLogger(__name__)
+
+# Where a visit left open on a previous day is closed: the boundary of the day it began.
+_A_DAY = 24 * 60 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +79,16 @@ class _Shared:
     # only what was committed, so "why are there fewer exits than entries" had no evidence
     # behind it: the log that held the refusals is rotated within hours.
     passages: PassageStore
+    # Empties the room at the office-day boundary. Shared, because there is one room: two
+    # cameras asking is two chances to notice the day turned, and the second one no-ops.
+    boundary: DayBoundary
+    # Where each camera stamps that it is still handling frames. One file per camera: a
+    # shared stamp keeps advancing while one camera is dead, and the dead one may be the
+    # camera that does the counting.
+    heartbeats: Path
+    # Identities the system named itself, awaiting a human's. The one pile worth interrupting
+    # somebody for, and so the only thing that reaches the chat.
+    provisional: Provisional
 
 
 @dataclass(slots=True)
@@ -134,6 +152,50 @@ class Application:
         self.passages.close()
 
 
+def _tick(boundary: DayBoundary, heartbeat: Heartbeat):
+    """What the frame loop does with no frame to show for it: stamp, then check the clock.
+
+    Wall time, not the frame's timestamp -- a file source numbers its frames from zero, which
+    would put every replay in 1970 and fire the day boundary on the second frame.
+
+    The stamp goes first. If closing out the room ever throws, the evidence that this camera
+    was alive up to that moment is already on disk.
+    """
+
+    def beat() -> None:
+        heartbeat.beat()
+        boundary.check(time.time())
+
+    return beat
+
+
+def _resume(ledger: Ledger, store: EventStore) -> DayBoundary:
+    """Rebuild the room from the record, and arm the boundary that will empty it tonight.
+
+    Called once, before any camera runs. Anything recorded as inside since the office day
+    began is taken back so its exit can still be attributed; anything older is closed out
+    now, because nobody slept here.
+    """
+    now = time.time()
+    inside = open_visits((at, name, direction) for name, at, direction in store.passages())
+    resume, stale = partition(inside, start_of_day(now))
+
+    ledger.restore(resume)
+    ledger.restore(stale)
+    for name, since in sorted(stale.items(), key=lambda item: item[1]):
+        # Closed at the boundary of the day it began, not now: dating it today would credit
+        # the visit with every hour the system was not watching.
+        ledger.close([name], start_of_day(since) + _A_DAY, RESET)
+    if resume or stale:
+        _log.info(
+            "resumed with %d occupant(s); closed %d visit(s) older than today",
+            len(resume),
+            len(stale),
+        )
+    # Seeded with today, so a boundary that has already passed is not fired again on boot.
+    return DayBoundary(ledger, day=office_day(now).toordinal())
+
+
 def build(config: Config, announce, observer: FrameObserver | None = None) -> Application:
     """Assemble every component described by ``config`` into a ready pipeline.
 
@@ -153,6 +215,16 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         faces=gallery.rank,
         face_similarity=thresholds.exit_face_match,
     )
+    # Take back whoever the record says is still inside, and close whatever is older than
+    # today. Both halves matter and neither is safe alone: without the restore a restart
+    # orphans every occupant permanently, and without the closing a restart carries
+    # yesterday's occupants into today untouched.
+    boundary = _resume(ledger, store)
+    provisional = Provisional(config.paths.gallery_dir.parent / "provisional")
+    # Written before any identity is folded into another, so a mistaken merge can be undone
+    # rather than having fused two people's histories for good.
+    merges = MergeLog(config.paths.review_dir.parent / "merges.jsonl")
+
     review = ReviewQueue(
         config.paths.review_dir,
         gallery,
@@ -160,6 +232,12 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         # So a corrected label reaches the crossing itself, which is what the time-in-the-room
         # figures are derived from.
         history=store,
+        # So the page can offer one card per person nobody has named, rather than one per
+        # sighting of them.
+        provisional=provisional,
+        # Naming an identity the system invented corrects every crossing it ever made, not
+        # just the one on screen -- and this log is what makes that reversible.
+        merges=merges,
     )
 
     notifier: TelegramNotifier | None = None
@@ -184,6 +262,9 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         zones=zones,
         witness=LeavingWitness(),
         passages=passages,
+        boundary=boundary,
+        heartbeats=config.paths.review_dir.parent / "heartbeat",
+        provisional=provisional,
     )
     cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     # The UI is started last: it serves frames and drift readings that only exist once the
@@ -274,6 +355,7 @@ def _build_camera(
         hooks=Hooks(
             announce=_directional(entry.announce, publisher, announce),
             on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
+            tick=_tick(shared.boundary, Heartbeat(shared.heartbeats / entry.name)),
         ),
         attention=attention,
     )
@@ -301,10 +383,10 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
         min_age,
         camera=entry.name,
         witness=shared.witness,
-        # So an unrecognised arrival's face is enrolled under their new identity, and the same
-        # person coming back is matched to it rather than becoming somebody else again.
-        gallery=shared.gallery,
-        gallery_dir=shared.gallery_dir,
+        # So an unrecognised arrival's face is enrolled under their new identity, the same
+        # person coming back is matched to it rather than becoming somebody else again, and
+        # the labelling page can tell an invented name from one a human chose.
+        enrolment=Enrolment(shared.gallery, shared.gallery_dir, shared.provisional),
     )
 
 
@@ -493,7 +575,7 @@ def _warn_moved(camera: str, drift: DriftWatch, shared: _Shared) -> None:
 
 
 def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce):
-    """File a completed sighting with its clip, notify the chat, then hand it on."""
+    """File a completed sighting with its clip, and tell the chat if it needs a name."""
 
     def publish(publication: Publication) -> None:
         # position and burst have to reach the record, or a group cannot be labelled by
@@ -505,7 +587,12 @@ def _publisher(review: ReviewQueue, notifier: TelegramNotifier | None, announce)
             position=publication.position,
             burst=publication.burst,
         )
-        if notifier is not None:
+        # Only somebody nobody has named yet is worth a message. Every crossing used to be
+        # sent, which made the chat a feed rather than a queue -- and a feed of things needing
+        # no action is one nobody reads, so the sightings that *did* need naming were lost in
+        # it. `introduced` is true exactly once per person, on the crossing that invented
+        # their identity, so a regular's daily arrival is filed silently.
+        if notifier is not None and publication.sighting.introduced:
             notifier.announce(
                 publication.sighting, sighting_id, publication.position, publication.total
             )

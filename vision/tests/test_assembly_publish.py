@@ -88,6 +88,9 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
         zones=ZoneStore(tmp_path),
         witness=None,
         passages=None,
+        boundary=None,
+        heartbeats=tmp_path / "heartbeat",
+        provisional=None,
     )
     image = np.zeros((4, 4, 3), dtype=np.uint8)
     camera = [Frame(timestamp=float(i), image=image) for i in range(3)]
@@ -96,3 +99,68 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
     assert [frame.timestamp for frame in source] == [0.0, 1.0, 2.0]
     assert frames.cameras == ["door-in"]
     assert frames.jpeg("door-in") == b"jpeg"
+
+
+# --- what reaches the chat ----------------------------------------------------------------
+
+
+def _named(introduced: bool, name: str):
+    from stuhi_vision.domain import Direction, Outcome, Sighting
+    from stuhi_vision.publishing import Publication
+
+    return Publication(
+        sighting=Sighting(
+            timestamp=1000.0,
+            direction=Direction.IN,
+            name=name,
+            score=0.4,
+            outcome=Outcome.NAMED,
+            introduced=introduced,
+        ),
+        clip=b"mp4",
+        position=1,
+        total=1,
+        burst=0,
+    )
+
+
+class _Notifier:
+    def __init__(self) -> None:
+        self.sent = []
+
+    def announce(self, sighting, sighting_id, position, total) -> None:
+        self.sent.append(sighting.name)
+
+
+class _Review:
+    def record(self, sighting, **_) -> str:
+        return "sighting-1"
+
+
+def test_only_a_newly_invented_identity_reaches_the_chat() -> None:
+    """Every crossing used to be sent, which made the chat a feed nobody reads."""
+    from stuhi_vision.assembly import _publisher
+
+    notifier = _Notifier()
+    filed = []
+    publish = _publisher(_Review(), notifier, filed.append)
+
+    publish(_named(introduced=True, name="guest-0803-0900"))
+    publish(_named(introduced=False, name="ilari"))
+    publish(_named(introduced=False, name="guest-0803-0900"))
+
+    assert notifier.sent == ["guest-0803-0900"]
+    # Everything is still filed and still counted -- only the messaging is narrowed.
+    assert [s.name for s in filed] == ["guest-0803-0900", "ilari", "guest-0803-0900"]
+
+
+def test_a_regular_arriving_every_day_is_never_announced() -> None:
+    from stuhi_vision.assembly import _publisher
+
+    notifier = _Notifier()
+    publish = _publisher(_Review(), notifier, lambda sighting: None)
+
+    for _ in range(20):
+        publish(_named(introduced=False, name="arsenii"))
+
+    assert notifier.sent == []

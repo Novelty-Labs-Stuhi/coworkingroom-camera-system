@@ -11,12 +11,29 @@ const MESSAGES = {
 // Newest first, or furthest from that person's average face first -- which puts the likeliest
 // mistakes at the top instead of the most recent.
 let sortBy = 'latest';
-// Which pile is on screen. One at a time: with seven of them, stacking made the one being
-// worked through impossible to find.
-let showing = 'unchecked_unknown';
+// Which pile is on screen. One at a time: with eight of them, stacking made the one being
+// worked through impossible to find. Opens on the pile the system is actually asking about.
+let showing = 'unnamed';
 
 // The two piles that are not sightings but *pairs* of crossings, and come from the accounting
 // rather than the review queue. They are about whether the count adds up, not about labelling.
+// What each pile is, shown under the buttons. Only the ones whose contents are not obvious
+// from the button: a description on every pile is a paragraph nobody reads.
+const ABOUT = new Map([
+  [
+    'unnamed',
+    'People the system gave itself a name for, because it recognised nobody. One card each, '
+    + 'showing their clearest face -- not one per sighting, since naming any one of them '
+    + 'names the person. These are the only cards that also reach the chat.',
+  ],
+  [
+    'recheck',
+    'Faces enrolled under a name they do not look much like, compared against the other '
+    + 'faces enrolled for that person. Either the label is wrong, or the face is a poor '
+    + 'one to recognise from.',
+  ],
+]);
+
 const PAIRED = new Map([
   [
     'renamed_exits',
@@ -536,15 +553,22 @@ function buildPair(entry) {
   return article;
 }
 
+// Everything that follows from *which* pile is on screen, in one place -- so the pile the
+// page opens on is described as fully as one arrived at by clicking, which it was not.
+function describePile() {
+  document.getElementById('about-pile').textContent =
+    ABOUT.get(showing) || PAIRED.get(showing) || '';
+  // Ordering is a question about sightings; a pair is already in the order it happened.
+  document.getElementById('sorting').hidden = PAIRED.has(showing);
+}
+
 for (const button of document.querySelectorAll('.pick')) {
   button.addEventListener('click', () => {
     showing = button.dataset.pile;
     for (const other of document.querySelectorAll('.pick')) {
       other.classList.toggle('chosen', other === button);
     }
-    document.getElementById('about-pile').textContent = PAIRED.get(showing) || '';
-    // Ordering is a question about sightings; a pair is already in the order it happened.
-    document.getElementById('sorting').hidden = PAIRED.has(showing);
+    describePile();
     document.getElementById('cards').replaceChildren();
     refresh();
   });
@@ -554,5 +578,6 @@ function refresh() {
   return PAIRED.has(showing) ? Promise.all([loadSightings(), loadAccounting()]) : loadSightings();
 }
 
+describePile();
 refresh();
 setInterval(refresh, 15000);

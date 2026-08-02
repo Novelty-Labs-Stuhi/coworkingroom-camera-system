@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -82,6 +83,51 @@ class Ledger:
         with self._lock:
             self._inside[name] = Occupant(name, timestamp, body_embedding)
             self._sink.record(Event(timestamp, name, Direction.IN, camera))
+
+    def restore(self, occupants: dict[str, float]) -> None:
+        """Take back the people the record says are inside, after a restart.
+
+        No events are written: these entries were journalled when they happened, and writing
+        them again would double every visit. Body embeddings are not restored either -- they
+        described crops from a process that has gone -- so an exit for one of these people
+        falls through to the face and pool evidence, which is the better evidence anyway.
+
+        Without this a restart forgot everybody inside, so their exits matched nobody and the
+        entries they should have closed stayed open permanently. Every restart added
+        occupants that could never leave.
+        """
+        with self._lock:
+            for name, entered_at in occupants.items():
+                self._inside.setdefault(name, Occupant(name, entered_at, None))
+
+    def close(self, names: Iterable[str], timestamp: float, named_by: str) -> list[str]:
+        """Journal an exit for each of ``names`` that is inside, and remove them.
+
+        Only an exit is written. A visit being closed was already journalled when it opened,
+        and re-entering it to close it would double the entry -- which is how a repair turns
+        into the thing it was repairing.
+        """
+        with self._lock:
+            closed = [name for name in sorted(names) if name in self._inside]
+            for name in closed:
+                del self._inside[name]
+                self._sink.record(
+                    Event(timestamp, name, Direction.OUT, "", named_by=named_by)
+                )
+            return closed
+
+    def close_all(self, timestamp: float, named_by: str) -> list[str]:
+        """Empty the room, journalling an exit for each. Returns who was closed.
+
+        The office-day boundary calls this. Nobody stays overnight, so anyone still recorded
+        inside is an exit that was missed -- and closing it is what keeps a single missed
+        exit wrong until morning rather than wrong for ever.
+        """
+        with self._lock:
+            names = self.close(list(self._inside), timestamp, named_by)
+            if names:
+                _log.info("day boundary closed %d visit(s): %s", len(names), ", ".join(names))
+            return names
 
     def rename(self, old: str, new: str) -> bool:
         """Follow a corrected name for somebody currently inside. False if they are not.

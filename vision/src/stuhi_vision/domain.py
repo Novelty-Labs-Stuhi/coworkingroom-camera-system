@@ -98,6 +98,12 @@ class Sighting:
     outcome: Outcome
     face_embedding: np.ndarray | None = None
     face_crop: np.ndarray | None = None
+    # True when this crossing is the one that *invented* its identity -- somebody the
+    # recogniser had never seen, now enrolled under a name the system made up. It is the
+    # only moment an identity is new, which makes it the natural trigger for asking a human
+    # to name them: exactly once per person, with no record of what has already been asked
+    # to keep in step, and unaffected by a restart.
+    introduced: bool = False
 
 
 @dataclass(frozen=True, slots=True)

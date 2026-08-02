@@ -15,8 +15,11 @@ Layout under the review directory, one set per sighting id::
     2026-07-27_18-04-11.jpg    the face crop, for sending to a human
     index.json                 the sighting records
 
-Note the SQLite occupancy event keeps the name it was recorded with; relabelling teaches
-the gallery and fixes the review record, but does not rewrite history.
+A label reaches the event log too, and *how far* depends on what is being said. Naming an
+identity the system invented for itself corrects every crossing it ever made, because that is
+what the statement means and because entries pair with exits by name -- renaming one half of a
+visit would leave an entry that never closes. Correcting a name the recogniser chose from the
+gallery touches only that crossing: the person it named is still themselves everywhere else.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
@@ -33,6 +37,7 @@ import numpy as np
 
 from .domain import Outcome, Sighting
 from .enrolment import Audit, Reference, audit
+from .merges import LABELLED, merge_identity
 from .names import parse_names
 from .recognition.gallery import FaceGallery
 from .selection import choose
@@ -129,6 +134,8 @@ class ReviewQueue:
         gallery: FaceGallery,
         gallery_dir: Path,
         history=None,
+        provisional=None,
+        merges=None,
     ) -> None:
         self._dir = directory
         self._gallery = gallery
@@ -138,6 +145,14 @@ class ReviewQueue:
         # amount of careful labelling would ever change them. Optional, because labelling works
         # perfectly well on its own -- it is the *figures* that need this.
         self._history = history
+        # Which identities the system named itself. Needed to answer "who has nobody named
+        # yet", which is a question about identities rather than about sightings -- and so
+        # cannot be derived from the records alone.
+        self._provisional = provisional
+        # Where an identity folded into another is written down before it is folded, so a
+        # mistaken merge can be taken apart again. Without it, naming the wrong person would
+        # fuse two people's histories permanently on the strength of one click.
+        self._merges = merges
         self._dir.mkdir(parents=True, exist_ok=True)
         self._records: dict[str, ReviewRecord] = {}
         # Sightings are filed by the pipeline thread and labelled by the chat poller and
@@ -298,17 +313,46 @@ class ReviewQueue:
         return sorted(members, key=lambda r: r.position)
 
     def _remember(self, record: ReviewRecord, name: str) -> None:
+        # Whether the name being replaced was one the system invented, decided *here* rather
+        # than inside _correct_history. Claiming it below makes the answer change, so asking
+        # afterwards would always say no and the identity would never be merged.
+        invented = bool(
+            self._provisional is not None
+            and record.name
+            and self._provisional.holds(record.name)
+        )
+        # A human has answered for whoever this was, so the identity the system invented for
+        # them stops being an open question -- even though the gallery may still hold that
+        # name until somebody merges it. Without this, labelling one of a stranger's ten
+        # sightings would leave the other nine to put the same card back on the page.
+        if invented:
+            self._provisional.claimed(record.name)
         self._records[record.sighting_id] = ReviewRecord(
             **{**asdict(record), "labelled_as": name, "checked": True}
         )
         self._flush()
-        self._correct_history(record, name)
+        self._correct_history(record, name, whole_identity=invented)
         # The matching set follows every change to the labelled faces, or a correction would
         # not reach recognition until the next restart.
         self.refresh_matching()
 
-    def _correct_history(self, record: ReviewRecord, name: str) -> None:
-        """Put this name on the crossing itself, so the presence figures follow the correction.
+    def _correct_history(
+        self, record: ReviewRecord, name: str, whole_identity: bool = False
+    ) -> None:
+        """Carry a label into the event log, so the presence figures follow the correction.
+
+        Two different statements wear the same clothes here, and applying the wrong one is
+        how labelling damages the record instead of repairing it:
+
+        * naming an identity **the system invented** says who that identity *is*, and it was
+          always true -- so every crossing it ever made is corrected at once. This is what
+          makes one label worth all the clips nobody will ever look at. It also keeps a visit
+          whole: entries pair with exits *by name*, so renaming one half and not the other
+          leaves an entry that never closes and an exit belonging to nobody -- a phantom
+          occupant, manufactured by the act of labelling;
+        * correcting a name the recogniser **chose from the gallery** says only that *this
+          crossing* was somebody else. That person is still themselves everywhere else, and
+          renaming their whole history would be a far larger claim than the one being made.
 
         Never raises: a label must be recorded even if the history cannot be reached, because
         the label is the thing being asked for and the figures can be recomputed later.
@@ -316,7 +360,12 @@ class ReviewQueue:
         if self._history is None:
             return
         try:
-            self._history.rename_crossing(record.timestamp, record.direction, name)
+            if whole_identity and self._merges is not None and record.name:
+                merge_identity(
+                    self._history, self._merges, record.name, name, LABELLED, time.time()
+                )
+            else:
+                self._history.rename_crossing(record.timestamp, record.direction, name)
         except Exception as exc:
             _log.error("could not correct the history for %s: %s", record.sighting_id, exc)
 
@@ -608,12 +657,44 @@ class ReviewQueue:
         unchecked = [r for r in records if not r.checked and not r.dismissed]
         checked = [r for r in records if r.checked]
         return {
+            "unnamed": self.unnamed(records, limit=limit),
             "unchecked_unknown": order([r for r in unchecked if _is_unknown(r)]),
             "unchecked_named": order([r for r in unchecked if not _is_unknown(r)]),
             "recheck": order([r for r in checked if r.sighting_id in rechecking]),
             "checked_unknown": order([r for r in checked if _is_unknown(r)]),
             "checked": order(list(checked)),
         }
+
+    def unnamed(self, records: list[ReviewRecord] | None = None, limit: int = 50) -> list:
+        """One card per identity the system named itself, best face first.
+
+        Deliberately grouped by *person*, not by sighting. A stranger who comes through ten
+        times leaves ten sightings, and offering all ten is offering the same question ten
+        times: the answer to any one of them names the identity, and the other nine vanish.
+        One clip is enough to say who somebody is.
+
+        The card offered is their clearest face -- the highest-scoring, undismissed sighting
+        -- because that is the one most likely to be recognisable, and a name given from a
+        poor frame is the mistake this pile exists to prevent.
+        """
+        if self._provisional is None:
+            return []
+        if records is None:
+            with self._lock:
+                records = list(self._records.values())
+        wanted = self._provisional.names(known=self._gallery.names)
+
+        best: dict[str, ReviewRecord] = {}
+        for record in records:
+            name = record.labelled_as or record.name
+            if name not in wanted or record.dismissed:
+                continue
+            held = best.get(name)
+            if held is None or record.score > held.score:
+                best[name] = record
+        # Longest-unnamed first: somebody who has been coming through for a week without a
+        # name is a worse gap in the figures than somebody who arrived a minute ago.
+        return sorted(best.values(), key=lambda r: r.timestamp)[:limit]
 
     def _distances(self) -> dict[str, float]:
         """How much each enrolled face is unlike the rest of that person's, by sighting id."""
