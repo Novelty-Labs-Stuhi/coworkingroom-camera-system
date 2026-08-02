@@ -80,6 +80,7 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
     frames = LatestFrames(lambda image: b"jpeg")
     shared = _Shared(
         gallery=None,
+        gallery_dir=tmp_path / "gallery",
         ledger=None,
         review=None,
         notifier=None,

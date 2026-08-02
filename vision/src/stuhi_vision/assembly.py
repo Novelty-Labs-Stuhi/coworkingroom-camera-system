@@ -10,6 +10,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from .alignment import DriftWatch
 from .attention import Attention
@@ -55,6 +56,9 @@ class _Shared:
     """
 
     gallery: FaceGallery
+    # Where the gallery is written. Needed because a new identity is enrolled the moment an
+    # unrecognised person walks in, and an enrolment that is not saved is lost on restart.
+    gallery_dir: Path
     ledger: Ledger
     review: ReviewQueue
     notifier: TelegramNotifier | None
@@ -172,6 +176,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     passages = PassageStore(config.paths.database)
     shared = _Shared(
         gallery=gallery,
+        gallery_dir=config.paths.gallery_dir,
         ledger=ledger,
         review=review,
         notifier=notifier,
@@ -291,7 +296,15 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
     if entry.role == "identify":
         return Identifier(sessions, shared.witness, min_age, camera=entry.name)
     return Doorkeeper(
-        sessions, shared.ledger, min_age, camera=entry.name, witness=shared.witness
+        sessions,
+        shared.ledger,
+        min_age,
+        camera=entry.name,
+        witness=shared.witness,
+        # So an unrecognised arrival's face is enrolled under their new identity, and the same
+        # person coming back is matched to it rather than becoming somebody else again.
+        gallery=shared.gallery,
+        gallery_dir=shared.gallery_dir,
     )
 
 

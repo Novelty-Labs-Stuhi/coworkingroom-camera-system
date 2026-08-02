@@ -19,6 +19,7 @@ Anything unresolved is recorded as unattributed rather than guessed.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, replace
 
@@ -30,6 +31,8 @@ from .recognition.embeddings import cosine
 # An exit nobody could be matched to. Recorded rather than dropped, so the ledger's own
 # history shows the gap instead of the occupancy count quietly climbing forever.
 UNATTRIBUTED = "unknown"
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -124,8 +127,14 @@ class Ledger:
                 resolved = self._among_occupants(face_embedding)
                 named_by = "pool" if resolved else named_by
             if resolved is None:
+                resolved = self._only_occupant()
+                named_by = "only" if resolved else named_by
+            if resolved is None:
                 resolved = self._attribute(body_embedding)
                 named_by = "body" if resolved else named_by
+            if resolved is None:
+                resolved = self._longest_inside()
+                named_by = "longest" if resolved else named_by
             if resolved is not None:
                 del self._inside[resolved]
             self._sink.record(
@@ -139,6 +148,25 @@ class Ledger:
                 )
             )
             return resolved
+
+    def _longest_inside(self) -> str | None:
+        """Whoever has been in longest, when nothing else could name the exit.
+
+        Somebody walked out: that much is established by the doorway before this is asked.
+        Refusing to say who leaves them inside for ever, and a room that fills and never empties
+        is what this replaced -- dozens of people credited with every hour of every day, which
+        is both wrong and obviously wrong.
+
+        The longest-present is the safest guess. They have had the most opportunity to leave
+        unseen, and an unclosed entry distorts their figures most, while somebody who arrived a
+        minute ago is the least likely to be walking out now. It remains a guess: the crossing
+        is recorded as named by "longest", so hours resting on it can be told from the rest.
+        """
+        if not self._inside:
+            return None
+        who = min(self._inside, key=lambda name: self._inside[name].entered_at)
+        _log.info("exit matched nobody; closing the longest visit: %s", who)
+        return who
 
     def _among_occupants(self, face: np.ndarray | None) -> str | None:
         """Which of the people inside this face belongs to, if any of them clearly.
@@ -158,11 +186,17 @@ class Ledger:
         runner_up = inside[1].score if len(inside) > 1 else 0.0
         return best.name if best.score - runner_up >= self._margin else None
 
+    def _only_occupant(self) -> str | None:
+        """The one person inside, when there is only one. Not a match -- an elimination.
+
+        Kept separate from the body comparison so the record says which it was. Filed as a body
+        match, an exit with no body embedding at all looked like evidence it never had.
+        """
+        return next(iter(self._inside)) if len(self._inside) == 1 else None
+
     def _attribute(self, query: np.ndarray | None) -> str | None:
         if not self._inside:
             return None
-        if len(self._inside) == 1:
-            return next(iter(self._inside))  # elimination: only one candidate
         if query is None:
             return None  # cannot match a missing body against several candidates
         ranked = sorted(

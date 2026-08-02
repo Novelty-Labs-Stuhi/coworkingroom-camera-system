@@ -16,6 +16,7 @@ It returns a :class:`~.domain.Sighting` carrying the evidence -- score, outcome,
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from .domain import Crossing, Direction, Outcome, Sighting
 from .identity import Decision
@@ -36,13 +37,18 @@ class Doorkeeper:
         min_track_age: int,
         camera: str = "",
         witness: LeavingWitness | None = None,
+        gallery=None,
+        gallery_dir=None,
     ) -> None:
         self._sessions = sessions
         self._ledger = ledger
         self._min_track_age = min_track_age
         self._camera = camera
         self._witness = witness
-        self._guests = 0
+        # Where a new identity's face goes. Without it an unrecognised person is unrecognisable
+        # again next time, so they can never be matched on the way out.
+        self._gallery = gallery
+        self._gallery_dir = gallery_dir
 
     def commit(self, crossing: Crossing) -> Sighting | None:
         """Apply a crossing; returns the sighting, or ``None`` if it was rejected."""
@@ -73,11 +79,35 @@ class Doorkeeper:
         )
 
     def _enter(self, session: TrackSession, decision: Decision, timestamp: float) -> str:
-        name = decision.name if decision.outcome is Outcome.NAMED else self._new_guest()
+        """Somebody came in. Recognised or not, they get an identity that lasts."""
+        if decision.outcome is Outcome.NAMED:
+            name = decision.name
+        else:
+            name = self._someone_new(session, timestamp)
         embedding = session.entry_embedding
         if embedding is None:
             embedding = session.body_embedding  # no face frame; use the sharpest body
         self._ledger.enter(name, embedding, timestamp, self._camera)
+        return name
+
+    def _someone_new(self, session: TrackSession, timestamp: float) -> str:
+        """A fresh identity for somebody nobody recognised -- and *enrol their face under it*.
+
+        Two things were wrong with the old guest label. It came from a counter that starts at
+        one in every process, so a restart re-issued names that already existed and two
+        different people shared one. And the face was never enrolled, so the same person coming
+        back was unrecognised again and got yet another name -- which is how dozens of guests
+        end up in the room at once, none of them ever leaving, because an exit can only be
+        matched to somebody the recogniser can find.
+
+        Enrolled, an unnamed identity behaves like a person: the next arrival matches it, their
+        exit can be attributed, and it can later be given a real name or merged into one.
+        """
+        name = f"guest-{datetime.fromtimestamp(timestamp).strftime('%m%d-%H%M%S')}"
+        if session.face_embedding is not None and self._gallery is not None:
+            self._gallery.add(name, session.face_embedding)
+            self._gallery.save(self._gallery_dir)
+            _log.info("%s enrolled %s as somebody new", self._camera, name)
         return name
 
     def _exit(self, session: TrackSession, decision: Decision, timestamp: float) -> str | None:
@@ -106,10 +136,6 @@ class Doorkeeper:
             named,
             face_embedding=session.face_embedding,
         )
-
-    def _new_guest(self) -> str:
-        self._guests += 1
-        return f"guest-{self._guests}"
 
 
 class Identifier:

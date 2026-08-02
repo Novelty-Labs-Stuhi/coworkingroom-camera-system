@@ -195,7 +195,13 @@ role = "identify"
     counter, namer = cfg.cameras
     assert (counter.role, namer.role) == ("count", "identify")
 
-    shared = SimpleNamespace(ledger=object(), witness=LeavingWitness())
+    shared = SimpleNamespace(
+        ledger=object(),
+        witness=LeavingWitness(),
+        # A new identity's face is enrolled the moment somebody unrecognised walks in.
+        gallery=None,
+        gallery_dir=tmp_path / "gallery",
+    )
     assert isinstance(_committer(counter, object(), shared, 2), Doorkeeper)
     assert isinstance(_committer(namer, object(), shared, 2), Identifier)
 

@@ -36,21 +36,33 @@ def test_exit_matches_best_pair_with_clear_margin() -> None:
     assert ledger.occupancy == ["bob"]
 
 
-def test_exit_unresolved_when_ambiguous() -> None:
+def test_an_exit_nobody_can_be_matched_to_closes_the_longest_visit() -> None:
+    """Somebody walked out, so somebody has to leave.
+
+    The appearance is a coin-flip between two occupants, so it is not used to choose. Duration
+    is: the longest-present has had the most opportunity to leave unseen, and their figures are
+    the ones an unclosed entry distorts most. Leaving both inside is what filled the room with
+    people credited with every hour of every day.
+    """
     ledger = _ledger(similarity=0.5, margin=0.1)
     ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
     ledger.enter("bob", np.array([0.9, 0.1]), timestamp=2.0)  # very close to alice
-    who = ledger.exit(np.array([1.0, 0.0]), timestamp=3.0)  # matches both nearly equally
-    assert who is None
-    assert ledger.occupancy == ["alice", "bob"]  # nobody removed on a coin-flip
+
+    who = ledger.exit(np.array([1.0, 0.0]), timestamp=3.0)
+
+    assert who == "alice"            # in longest
+    assert ledger.occupancy == ["bob"]
 
 
-def test_exit_unresolved_when_below_threshold() -> None:
+def test_an_exit_matching_nobody_well_enough_still_closes_a_visit() -> None:
     ledger = _ledger(similarity=0.95, margin=0.05)
     ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
     ledger.enter("bob", np.array([0.0, 1.0]), timestamp=2.0)
+
     who = ledger.exit(np.array([0.7, 0.7]), timestamp=3.0)  # ~0.71 to each, under 0.95
-    assert who is None
+
+    assert who == "alice"            # the guess is by duration, not by appearance
+    assert ledger.occupancy == ["bob"]
 
 
 def test_events_are_journalled() -> None:
@@ -145,8 +157,9 @@ def test_a_face_that_suits_two_occupants_equally_names_neither() -> None:
     ledger.enter("alice", np.array([1.0, 0.0]), timestamp=1.0)
     ledger.enter("bob", np.array([0.0, 1.0]), timestamp=2.0)
 
-    assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) is None
-    assert ledger.occupancy == ["alice", "bob"]      # nobody removed on a coin-flip
+    # The face names neither, so duration decides: alice arrived first.
+    assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) == "alice"
+    assert ledger.occupancy == ["bob"]
 
 
 def test_a_name_a_camera_read_still_wins_over_the_pool() -> None:
@@ -174,3 +187,34 @@ def test_the_pool_is_ignored_when_nobody_is_inside() -> None:
         face_similarity=0.22,
     )
     assert ledger.exit(None, timestamp=3.0, face_embedding=np.array([1.0])) is None
+
+
+def test_an_exit_with_nobody_inside_is_still_recorded() -> None:
+    """There is nobody to close, and the crossing still happened -- so it is not invented."""
+    sink = FakeSink()
+    ledger = Ledger(sink, exit_similarity=0.5, exit_margin=0.1)
+
+    assert ledger.exit(None, timestamp=3.0) is None
+    assert sink.events[-1].name == "unknown"
+
+
+def test_a_guessed_exit_says_so_in_the_record() -> None:
+    """Hours resting on a guess have to be tellable from hours resting on a face."""
+    sink = FakeSink()
+    ledger = Ledger(sink, exit_similarity=0.99, exit_margin=0.5)
+    ledger.enter("alice", None, timestamp=1.0)
+    ledger.enter("bob", None, timestamp=2.0)
+
+    ledger.exit(None, timestamp=3.0)
+
+    assert sink.events[-1].named_by == "longest"
+
+
+def test_the_only_person_inside_is_an_elimination_not_a_body_match() -> None:
+    """With one candidate there is nothing to compare, and the record should not pretend."""
+    sink = FakeSink()
+    ledger = Ledger(sink, exit_similarity=0.99, exit_margin=0.5)
+    ledger.enter("alice", None, timestamp=1.0)
+
+    assert ledger.exit(None, timestamp=2.0) == "alice"
+    assert sink.events[-1].named_by == "only"

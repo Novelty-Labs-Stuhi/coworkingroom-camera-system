@@ -149,3 +149,39 @@ def test_a_face_seen_by_the_counting_camera_wins_over_the_other_camera() -> None
 
     assert sink.events[-1].name == "alice"
     assert witness.waiting() == ["bob"]
+
+
+def test_an_unrecognised_arrival_gets_an_identity_that_lasts(tmp_path) -> None:
+    """Enrolled, so the same person coming back is matched instead of becoming somebody else.
+
+    The old label came from a counter that restarts at one in every process -- so a restart
+    re-issued names two different people then shared -- and the face was never enrolled, so
+    every return visit created yet another identity. That is how a room fills with guests who
+    never leave: an exit can only be matched to somebody the recogniser can find.
+    """
+    import numpy as np
+
+    from stuhi_vision.recognition.gallery import FaceGallery
+
+    gallery = FaceGallery()
+    ledger = _ledger(FakeSink())
+    face = np.array([1.0, 0.0], dtype=np.float32)
+    session = FakeSession(None)
+    session.face_embedding = face
+
+    door = Doorkeeper(
+        FakeSessions(session),
+        ledger,
+        min_track_age=2,
+        gallery=gallery,
+        gallery_dir=tmp_path / "gallery",
+    )
+    sighting = door.commit(_crossing(Direction.IN, timestamp=1_785_600_000.0))
+
+    assert sighting is not None
+    name = sighting.name
+    assert name.startswith("guest-")
+    assert gallery.counts() == {name: 1}          # findable next time
+    assert ledger.occupancy == [name]
+    # Derived from the moment, so a restart cannot hand the same name to somebody else.
+    assert name != "guest-1"
