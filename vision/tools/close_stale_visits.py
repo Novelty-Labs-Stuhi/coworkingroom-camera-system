@@ -84,19 +84,29 @@ def main() -> None:
         print("(dry run: nothing written)")
         return
 
-    for name, since in stale.items():
-        # Never before the entry itself, and never in the future: a visit that began late at
-        # night closes a minute later rather than a minute earlier.
-        closed_at = max(min(_end_of_day(since), now), since + 60)
-        connection.execute(_INSERT, (closed_at, name))
-    connection.commit()
-    print(f"closed {len(stale)} visit(s)")
-    remaining = _open_visits(
-        connection.execute(
+    # Repeated until it converges. Occupancy is keyed by name, so one person cannot be inside
+    # twice -- but the recorded crossings contain entries that were never closed *and* later
+    # entries for the same person, and each pass can only close the earliest of them. One pass
+    # reported 33 closed and 34 still open, which reads like a failure and is really the next
+    # layer surfacing.
+    closed = 0
+    for _ in range(20):
+        for name, since in stale.items():
+            # Never before the entry itself, and never in the future: a visit beginning late at
+            # night closes a minute later rather than a minute earlier.
+            connection.execute(_INSERT, (max(min(_end_of_day(since), now), since + 60), name))
+            closed += 1
+        connection.commit()
+        rows = connection.execute(
             "SELECT timestamp, name, direction FROM events ORDER BY timestamp"
         ).fetchall()
-    )
-    print(f"still open: {len(remaining)}")
+        open_visits = _open_visits(rows)
+        stale = {name: since for name, since in open_visits.items() if since < cutoff}
+        if not stale:
+            break
+
+    print(f"closed {closed} visit(s)")
+    print(f"still open: {len(open_visits)}   still stale: {len(stale)}")
 
 
 if __name__ == "__main__":
