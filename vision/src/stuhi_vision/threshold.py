@@ -43,7 +43,15 @@ Edge = Literal["left", "right", "top", "bottom"]
 #                 way. Needs no frame edge, so it survives a camera being repositioned.
 #   "approach" -- did it grow or shrink? Right when people walk straight at the lens, where
 #                 everyone is already touching the near edge and "at the edge" says nothing.
-Discriminator = Literal["edge", "travel", "approach"]
+#   "covering" -- was the doorframe *covered* when the track ended, or when it began? Asks
+#                 the pixels, not the box: the doorframe's pixels change only when a body is
+#                 in front of it, so this needs no displacement and no threshold at all.
+Discriminator = Literal["edge", "travel", "approach", "covering"]
+
+# Whether the doorframe is covered *right now*. Read once per frame and shared by every
+# track, because coverage is a fact about the doorway rather than about one person -- which
+# is also why a track must overlap the zone before the coverage is credited to it.
+Covered = Callable[[], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,13 +98,18 @@ class Touch:
     travelled: float   # along the axis of ``edge``; negative is towards left or top
     grew: float        # change in height as a fraction of the frame
     direction: Direction | None   # None: it reached the box but was not judged a passage
+    covered_first: bool = False   # the doorframe was covered on the track's first frame
+    covered_last: bool = False    # ...and on its last
 
     @property
     def readable(self) -> str:
         verdict = self.direction.value if self.direction else "no passage"
+        covering = f"{'covered' if self.covered_first else 'clear'}"
+        covering += f"->{'covered' if self.covered_last else 'clear'}"
         return (
             f"touched the box over {self.frames} frames, "
-            f"travelled {self.travelled:+.2f}, grew {self.grew:+.2f} -> {verdict}"
+            f"travelled {self.travelled:+.2f}, grew {self.grew:+.2f}, "
+            f"doorframe {covering} -> {verdict}"
         )
 
 
@@ -111,6 +124,12 @@ class _Track:
     touched_zone: bool = False
     tallest: float = 0.0
     frames: int = field(default=1)
+    # Whether the doorframe was covered on this track's first and most recent frame. The
+    # "last" one is overwritten every frame, so when the track is finally judged it holds
+    # the state as the person was last *seen* -- not as it is several frames later, by
+    # which time whatever they were covering has cleared.
+    covered_first: bool = False
+    covered_last: bool = False
 
 
 class ThresholdMonitor:
@@ -121,7 +140,12 @@ class ThresholdMonitor:
     signal -- they left the frame at the door edge.
     """
 
-    def __init__(self, config: ThresholdConfig, report: Report | None = None) -> None:
+    def __init__(
+        self,
+        config: ThresholdConfig,
+        report: Report | None = None,
+        covered: Covered | None = None,
+    ) -> None:
         self._config = config
         self._tracks: dict[int, _Track] = {}
         self._frame_index = 0
@@ -129,6 +153,9 @@ class ThresholdMonitor:
         # refused passage is indistinguishable from one the tracker never saw, and the two
         # need entirely different fixes.
         self._report = report
+        # Only the "covering" discriminator asks this. Left unset it reads as never covered,
+        # which makes that rule judge nothing rather than judge wrongly.
+        self._covered = covered
 
     def use_zone(self, zone: tuple[float, float, float, float]) -> None:
         """Judge against a different box from now on, without a restart.
@@ -143,14 +170,20 @@ class ThresholdMonitor:
         self._frame_index += 1
         height, width = frame.image.shape[:2]
 
+        # Read once, not once per person: it is one fact about the doorway, and asking it
+        # again mid-frame could give two tracks different answers about the same moment.
+        covered = self._covered() if self._covered is not None else False
+
         present = set()
         for person in people:
             present.add(person.track_id)
-            self._observe(person, width, height)
+            self._observe(person, width, height, covered)
 
         return self._resolve_finished(present, frame)
 
-    def _observe(self, person: TrackedPerson, width: int, height: int) -> None:
+    def _observe(
+        self, person: TrackedPerson, width: int, height: int, covered: bool = False
+    ) -> None:
         box = person.box
         shape = relative(box, width, height)
         tall_enough = shape.height >= self._config.min_height
@@ -158,13 +191,14 @@ class ThresholdMonitor:
         track = self._tracks.get(person.track_id)
         if track is None:
             self._tracks[person.track_id] = track = _Track(
-                first=box, last=box, last_seen=self._frame_index
+                first=box, last=box, last_seen=self._frame_index, covered_first=covered
             )
         else:
             track.last = box
             track.last_seen = self._frame_index
             track.frames += 1
 
+        track.covered_last = covered
         track.tallest = max(track.tallest, shape.height)
         if tall_enough and overlaps(shape, self._config.zone):
             track.touched_zone = True
@@ -197,6 +231,8 @@ class ThresholdMonitor:
             direction = self._by_size(first, last)
         elif self._config.discriminator == "travel":
             direction = self._by_travel(first, last)
+        elif self._config.discriminator == "covering":
+            direction = self._by_covering(track)
         else:
             direction = self._by_edge(first, last)
         self._tell(track, first, last, direction)
@@ -214,6 +250,8 @@ class ThresholdMonitor:
                 - _leading(first, self._config.edge),
                 grew=last.height - first.height,
                 direction=direction,
+                covered_first=track.covered_first,
+                covered_last=track.covered_last,
             )
         )
 
@@ -258,6 +296,32 @@ class ThresholdMonitor:
             return None  # stood in the doorway rather than went through it
         towards_edge = moved < 0 if towards_lower else moved > 0
         return self._config.passing_means if towards_edge else _opposite(self._config.passing_means)
+
+    def _by_covering(self, track: _Track) -> Direction | None:
+        """Was the doorframe covered as the track ended, or as it began?
+
+        The doorframe's pixels change only when a body is *in front of* it: somebody in the
+        corridor beyond is seen through the opening and never covers it. So the coverage
+        state at the two moments a track is bounded by says which way the person went:
+
+        * covered as they vanished -- they were still in the doorway when they left the
+          picture, so they went through it;
+        * covered as they appeared, clear afterwards -- they came through it and walked on
+          into view.
+
+        Neither means they were never at the door. **Both** means they went to the doorway
+        and came back from it, which is not a passage and is refused rather than guessed.
+
+        Unlike every other discriminator this measures no distance and needs no margin: it
+        asks a question the pixels answer outright, so there is nothing here to tune. It is
+        also the one signal that gets *stronger* as the person comes closer, where the
+        detector that produced the track gets weaker.
+        """
+        if track.covered_last and not track.covered_first:
+            return self._config.passing_means
+        if track.covered_first and not track.covered_last:
+            return _opposite(self._config.passing_means)
+        return None
 
     def _by_size(self, first: _Relative, last: _Relative) -> Direction | None:
         """Grew towards the lens, or shrank away from it?

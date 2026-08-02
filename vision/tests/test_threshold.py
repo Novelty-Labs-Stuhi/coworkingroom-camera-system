@@ -333,3 +333,98 @@ def test_a_track_that_reaches_the_box_is_reported_either_way() -> None:
 
     assert [touch.direction for touch in touches] == [Direction.IN, None]
     assert "travelled -0.34" in touches[0].readable
+
+
+# --- the "covering" discriminator: direction from the doorframe's pixels ----------------
+#
+# The doorframe is covered only when a body is in front of it, so the coverage state at the
+# two moments a track is bounded by says which way the person went. Nothing here measures a
+# distance, so these tests hold a track still and vary only the coverage.
+
+
+def _covering_monitor(coverage: list[bool], **overrides) -> ThresholdMonitor:
+    """A monitor reading coverage from a list, one entry consumed per frame."""
+    frames = iter(coverage)
+    return ThresholdMonitor(
+        ThresholdConfig(discriminator="covering", **overrides),
+        covered=lambda: next(frames, False),
+    )
+
+
+def _run_covering(monitor: ThresholdMonitor, positions, track_id: int = 1):
+    crossings = []
+    for index, left in enumerate(positions):
+        crossings += monitor.update([_person(track_id, left)], _frame(index))
+    for index in range(20):
+        crossings += monitor.update([], _frame(100 + index))
+    return crossings
+
+
+def test_vanishing_while_the_doorframe_is_covered_is_a_passage_through_it() -> None:
+    # Clear when they appear, covered on the frame they were last seen: they left through
+    # the doorway. The box barely moves -- only the coverage decides.
+    crossings = _run_covering(
+        _covering_monitor([False, False, True, True]), [0.20, 0.20, 0.20, 0.20]
+    )
+
+    assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_appearing_while_covered_then_clearing_is_the_opposite_direction() -> None:
+    crossings = _run_covering(
+        _covering_monitor([True, True, False, False]), [0.20, 0.20, 0.20, 0.20]
+    )
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def test_covered_at_both_ends_is_refused_rather_than_guessed() -> None:
+    # To the doorway and back again: a passage in neither direction.
+    crossings = _run_covering(
+        _covering_monitor([True, False, False, True]), [0.20, 0.20, 0.20, 0.20]
+    )
+
+    assert crossings == []
+
+
+def test_never_covering_the_doorframe_is_not_a_passage() -> None:
+    crossings = _run_covering(
+        _covering_monitor([False, False, False, False]), [0.20, 0.20, 0.20, 0.20]
+    )
+
+    assert crossings == []
+
+
+def test_covering_needs_no_travel_at_all() -> None:
+    """A stationary track still resolves -- which is the whole point of the rule.
+
+    ``travel`` refuses this: the leading edge moves nothing, so it reads as standing in the
+    doorway. The pixels say otherwise, and here they are what is asked.
+    """
+    still = [0.20, 0.20, 0.20, 0.20]
+    covering = _run_covering(_covering_monitor([False, False, True, True]), still)
+    travelling = _run(_monitor(discriminator="travel"), still)
+
+    assert [c.direction for c in covering] == [Direction.IN]
+    assert travelling == []
+
+
+def test_coverage_is_credited_only_to_a_track_that_reached_the_doorframe() -> None:
+    """Coverage is one fact about the doorway, so something must tie it to a person.
+
+    Without the zone gate, somebody crossing the background while a door swings would be
+    handed the doorway's coverage and counted.
+    """
+    crossings = _run_covering(
+        _covering_monitor([False, False, True, True], zone=(0.0, 0.0, 0.25, 1.0)),
+        [0.60, 0.65, 0.70, 0.75],
+    )
+
+    assert crossings == []
+
+
+def test_without_a_coverage_source_the_rule_judges_nothing() -> None:
+    """An unwired monitor must refuse, not invent a direction from a default."""
+    monitor = ThresholdMonitor(ThresholdConfig(discriminator="covering"))
+
+    assert _run_covering(monitor, [0.55, 0.40, 0.25, 0.10]) == []
