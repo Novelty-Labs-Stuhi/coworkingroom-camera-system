@@ -1,0 +1,12 @@
+# The deployment server runs /bin/sh as dash, which does not tolerate a carriage return.
+#
+# `core.autocrlf` is true on the development machine, so both a checkout and `git archive`
+# were converting these to CRLF. A Python file survives that; a shell script does not -- the
+# supervisor failed to parse with "word unexpected (expecting do)", and it failed *after*
+# being copied into place, which is the worst moment for it. Pinning the ending here fixes it
+# at the source, so a future deploy cannot quietly reintroduce it.
+*.sh text eol=lf
+
+# Read by sqlite through the same path on either platform, but there is no reason for these to
+# differ between the repository and the server.
+*.sql text eol=lf
