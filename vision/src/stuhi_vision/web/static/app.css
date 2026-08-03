@@ -12,6 +12,13 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute has to win, and on its own it does not. It is a browser-level rule on
+   the element, so any class here that sets `display` outrules it -- which silently unhid the
+   rename form on a profile, and the two correction forms, all three of which are supposed to
+   appear only when asked for. Declared once, rather than every panel remembering to write
+   `.thing:not([hidden])`, because the ones that forget look fine until somebody opens the page. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   padding: 1.5rem;

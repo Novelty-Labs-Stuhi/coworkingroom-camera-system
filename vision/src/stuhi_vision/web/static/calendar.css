@@ -14,8 +14,14 @@
    the columns they belong to. */
 .cal-scroller {
   overflow-x: auto;
+  /* The chart scrolls inside itself; the page must never scroll sideways because of it. Both
+     halves are needed: max-width keeps this box within the column it sits in, and the rows
+     below take their width from their content so there is something for it to clip. */
+  max-width: 100%;
   padding-bottom: .35rem;
 }
+.cal-months,
+.cal-body { width: max-content; }
 
 .cal-months,
 .cal-grid {

@@ -45,9 +45,15 @@
       // The first column is skipped: it is usually a few days of the previous month, and
       // labelling it puts a month name over days that are not in it.
       if (column === 0) return;
+      // A label spans the columns it has room for, never more. Asking for four when two remain
+      // makes the grid invent the missing columns, which widens this row past the boxes below
+      // and slides every month name off the weeks it is naming. One column is not enough room
+      // for a month name, so the last few days of the chart go unlabelled rather than crooked.
+      const room = weeks.length - column;
+      if (room < 2) return;
       const label = document.createElement('span');
       label.textContent = MONTHS[month];
-      label.style.gridColumn = `${column + 1} / span 4`;
+      label.style.gridColumn = `${column + 1} / span ${Math.min(4, room)}`;
       row.append(label);
     });
     return row;
