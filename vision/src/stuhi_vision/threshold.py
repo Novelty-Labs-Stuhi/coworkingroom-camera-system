@@ -46,7 +46,7 @@ Edge = Literal["left", "right", "top", "bottom"]
 #   "covering" -- was the doorframe *covered* when the track ended, or when it began? Asks
 #                 the pixels, not the box: the doorframe's pixels change only when a body is
 #                 in front of it, so this needs no displacement and no threshold at all.
-Discriminator = Literal["edge", "travel", "approach", "covering"]
+Discriminator = Literal["edge", "travel", "approach", "covering", "preceded"]
 
 # Whether the doorframe is covered *right now*. Read once per frame and shared by every
 # track, because coverage is a fact about the doorway rather than about one person -- which
@@ -100,6 +100,25 @@ class Touch:
     direction: Direction | None   # None: it reached the box but was not judged a passage
     covered_first: bool = False   # the doorframe was covered on the track's first frame
     covered_last: bool = False    # ...and on its last
+    # Which came first for the "preceded" rule: being seen off the doorframe, or the doorframe
+    # activating. Reported because a verdict from an ordering is unarguable-with unless the
+    # ordering is on the record beside it.
+    outside_at: int | None = None
+    covered_at: int | None = None
+
+    @property
+    def order(self) -> str:
+        """The two moments the "preceded" rule compares, in words."""
+        if self.covered_at is None and self.outside_at is None:
+            return "never off the box, never covered"
+        if self.covered_at is None:
+            return f"seen off the box at {self.outside_at}, never covered"
+        if self.outside_at is None:
+            return f"covered at {self.covered_at}, never seen off the box"
+        first = "seen off the box" if self.outside_at < self.covered_at else "covered"
+        if self.outside_at == self.covered_at:
+            first = "both in the same frame"
+        return f"off the box at {self.outside_at}, covered at {self.covered_at} ({first} first)"
 
     @property
     def readable(self) -> str:
@@ -109,7 +128,7 @@ class Touch:
         return (
             f"touched the box over {self.frames} frames, "
             f"travelled {self.travelled:+.2f}, grew {self.grew:+.2f}, "
-            f"doorframe {covering} -> {verdict}"
+            f"doorframe {covering}, {self.order} -> {verdict}"
         )
 
 
@@ -130,6 +149,12 @@ class _Track:
     # which time whatever they were covering has cleared.
     covered_first: bool = False
     covered_last: bool = False
+    # For the "preceded" rule: the frame this person was first seen *outside* the zone, and the
+    # frame the zone first activated while they were on screen. Which came first is the whole
+    # verdict. Kept as frame indices rather than booleans because "before" is the question, and
+    # a pair of flags cannot answer it.
+    outside_at: int | None = None
+    covered_at: int | None = None
 
 
 class ThresholdMonitor:
@@ -200,8 +225,16 @@ class ThresholdMonitor:
 
         track.covered_last = covered
         track.tallest = max(track.tallest, shape.height)
-        if tall_enough and overlaps(shape, self._config.zone):
+        inside_zone = overlaps(shape, self._config.zone)
+        if tall_enough and inside_zone:
             track.touched_zone = True
+
+        # For the "preceded" rule. Both are first-wins: the question is which happened first, so
+        # a later sighting outside the zone says nothing that the first one did not already say.
+        if not inside_zone and track.outside_at is None:
+            track.outside_at = self._frame_index
+        if covered and track.covered_at is None:
+            track.covered_at = self._frame_index
 
     def _resolve_finished(self, present: set[int], frame: Frame) -> list[Crossing]:
         height, width = frame.image.shape[:2]
@@ -233,6 +266,8 @@ class ThresholdMonitor:
             direction = self._by_travel(first, last)
         elif self._config.discriminator == "covering":
             direction = self._by_covering(track)
+        elif self._config.discriminator == "preceded":
+            direction = self._by_preceded(track)
         else:
             direction = self._by_edge(first, last)
         self._tell(track, first, last, direction)
@@ -252,6 +287,8 @@ class ThresholdMonitor:
                 direction=direction,
                 covered_first=track.covered_first,
                 covered_last=track.covered_last,
+                outside_at=track.outside_at,
+                covered_at=track.covered_at,
             )
         )
 
@@ -320,6 +357,33 @@ class ThresholdMonitor:
         if track.covered_last and not track.covered_first:
             return self._config.passing_means
         if track.covered_first and not track.covered_last:
+            return _opposite(self._config.passing_means)
+        return None
+
+    def _by_preceded(self, track: _Track) -> Direction | None:
+        """Was the person already visible outside the doorframe before it was covered?
+
+        The only question this rule asks. Somebody walking **in** is seen approaching first and
+        covers the frame afterwards; somebody walking **out** covers the frame on their way to
+        being seen, so the covering comes first. Which of the two happened earlier is the
+        direction, and nothing else is consulted.
+
+        It deliberately does not read the order the doorframe's slices lit. That order is what
+        the coverage rule depends on, and it is unavailable exactly when it is needed: somebody
+        close to the lens covers every slice within one frame, which left about half of all
+        episodes with no readable direction on the live camera. Two events with a clear before
+        and after are available whenever the person is detected at all.
+
+        Refuses rather than guesses in all three ways it can be short of an answer: the frame
+        never covered, the person never seen off it, or both in the same frame -- one frame is
+        not an order, and inventing one here would put a crossing on the record that the footage
+        never showed.
+        """
+        if track.covered_at is None or track.outside_at is None:
+            return None
+        if track.outside_at < track.covered_at:
+            return self._config.passing_means
+        if track.outside_at > track.covered_at:
             return _opposite(self._config.passing_means)
         return None
 

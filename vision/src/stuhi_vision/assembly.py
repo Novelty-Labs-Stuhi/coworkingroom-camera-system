@@ -16,7 +16,7 @@ from .alignment import DriftWatch
 from .attention import Attention
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
-from .continuity import RESET, DayBoundary, open_visits, partition, start_of_day
+from .continuity import RESET, DayBoundary, end_of_day, open_visits, partition, start_of_day
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
@@ -52,9 +52,6 @@ from .witness import LeavingWitness
 from .zones import ZoneStore
 
 _log = logging.getLogger(__name__)
-
-# Where a visit left open on a previous day is closed: the boundary of the day it began.
-_A_DAY = 24 * 60 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +187,7 @@ def _resume(ledger: Ledger, store: EventStore) -> DayBoundary:
     for name, since in sorted(stale.items(), key=lambda item: item[1]):
         # Closed at the boundary of the day it began, not now: dating it today would credit
         # the visit with every hour the system was not watching.
-        ledger.close([name], start_of_day(since) + _A_DAY, RESET)
+        ledger.close([name], end_of_day(since), RESET)
     if resume or stale:
         _log.info(
             "resumed with %d occupant(s); closed %d visit(s) older than today",
@@ -347,8 +344,8 @@ def _build_camera(
         clear_frames=performance.clip_clear_frames,
     )
 
-    monitor, attention = _monitor(entry, shared.zones, shared.passages)
-    _follow_zone(entry, shared.zones, monitor, attention)
+    monitor, attention, doorframe = _monitor(entry, shared.zones, shared.passages)
+    _follow_zone(entry, shared.zones, monitor, attention, doorframe)
     pipeline = Pipeline(
         source=source,
         tracker=GatedTracker(
@@ -370,6 +367,7 @@ def _build_camera(
                 shadow=_shadow(entry.name, entry, attention),
             ),
             tick=_tick(shared.boundary, Heartbeat(shared.heartbeats / entry.name)),
+            doorframe=doorframe.update if doorframe is not None else None,
         ),
         attention=attention,
     )
@@ -404,7 +402,9 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
     )
 
 
-def _follow_zone(entry: CameraConfig, zones: ZoneStore, monitor, attention) -> None:
+def _follow_zone(
+    entry: CameraConfig, zones: ZoneStore, monitor, attention, doorframe=None
+) -> None:
     """Apply a redrawn zone to this running camera, rather than waiting for a restart.
 
     A zone is redrawn because the camera moved, so the count is wrong *now*. Removing one
@@ -421,6 +421,10 @@ def _follow_zone(entry: CameraConfig, zones: ZoneStore, monitor, attention) -> N
         monitor.use_zone(zone)
         if attention is not None:
             attention.use_zone(zone)
+        # The pixels a "preceded" camera watches have to move with the box too, or it would go
+        # on reporting the old doorframe as covered while the rule judged against the new one.
+        if doorframe is not None:
+            doorframe.use_zone(zone)
         _log.info("%s now judging the box %s", entry.name, [round(v, 3) for v in zone])
 
     zones.watch(apply)
@@ -481,8 +485,18 @@ def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | Non
         # once a frame, and uses them to decide when the detector is worth waking -- so the
         # two come as a pair. See docs/design.md.
         attention = Attention(Occlusion(zone=detector.zone, config=entry.coverage))
-        return PassageMonitor(detector, attention.episode, watcher=report), attention
-    return ThresholdMonitor(detector, report=report), None
+        return PassageMonitor(detector, attention.episode, watcher=report), attention, None
+
+    if getattr(detector, "discriminator", None) == "preceded":
+        # This rule needs one fact the tracker cannot supply: whether the doorframe was covered
+        # on a given frame. So the box's pixels are read every frame and handed over as a plain
+        # question, while the detector keeps running on every frame -- which is the point, since
+        # the rule is about having seen somebody *before* the box was covered.
+        occlusion = Occlusion(zone=detector.zone, config=entry.coverage)
+        monitor = ThresholdMonitor(detector, report=report, covered=lambda: occlusion.busy)
+        return monitor, None, occlusion
+
+    return ThresholdMonitor(detector, report=report), None, None
 
 
 def _region_builder(entry: CameraConfig, padding: float, zones: ZoneStore):

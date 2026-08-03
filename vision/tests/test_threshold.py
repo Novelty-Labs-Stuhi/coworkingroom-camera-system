@@ -428,3 +428,125 @@ def test_without_a_coverage_source_the_rule_judges_nothing() -> None:
     monitor = ThresholdMonitor(ThresholdConfig(discriminator="covering"))
 
     assert _run_covering(monitor, [0.55, 0.40, 0.25, 0.10]) == []
+
+
+# --- the "preceded" rule ---------------------------------------------------------------------
+#
+# Direction from one question: when the doorframe activated, had this person already been seen
+# off it? Seen off it first means they walked in; the frame covering first means they came out.
+# Nothing reads the order the frame's slices lit, which is what the coverage rule needs and
+# cannot get when somebody close to the lens covers every slice within one frame.
+
+
+class _Doorframe:
+    """The coverage signal, driven by the test the way the pipeline drives it: a callable."""
+
+    def __init__(self) -> None:
+        self.covered = False
+
+    def __call__(self) -> bool:
+        return self.covered
+
+
+def _preceded(passing_means: Direction = Direction.IN, report=None):
+    door = _Doorframe()
+    monitor = ThresholdMonitor(
+        ThresholdConfig(
+            discriminator="preceded",
+            zone=(0.0, 0.0, 0.30, 1.0),
+            passing_means=passing_means,
+        ),
+        report=report,
+        covered=door,
+    )
+    return monitor, door
+
+
+def _walk(monitor, door, steps, track_id: int = 1, height: float = 0.8):
+    """Walk a track through (left, covered) steps, then let it be lost so it is judged."""
+    crossings = []
+    for index, (left, covered) in enumerate(steps):
+        door.covered = covered
+        crossings += monitor.update([_person(track_id, left, height=height)], _frame(index))
+    door.covered = False
+    for index in range(20):
+        crossings += monitor.update([], _frame(100 + index))
+    return crossings
+
+
+def test_seen_off_the_doorframe_before_it_covered_is_walking_in() -> None:
+    """Approaching is visible first, and the frame is covered on the way through."""
+    monitor, door = _preceded()
+
+    crossings = _walk(monitor, door, [(0.70, False), (0.50, False), (0.20, True), (0.05, True)])
+
+    assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_the_doorframe_covering_first_is_coming_out() -> None:
+    """Somebody leaving covers the frame on their way to being visible at all."""
+    monitor, door = _preceded()
+
+    crossings = _walk(monitor, door, [(0.05, True), (0.20, True), (0.50, False), (0.70, False)])
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def test_a_doorframe_that_never_covered_is_not_a_passage() -> None:
+    """Somebody crossing the room behind the door is not somebody going through it."""
+    monitor, door = _preceded()
+
+    assert _walk(monitor, door, [(0.70, False), (0.60, False), (0.50, False)]) == []
+
+
+def test_never_being_seen_off_the_doorframe_is_refused() -> None:
+    """Standing on the frame the whole time has no before and no after to read."""
+    monitor, door = _preceded()
+
+    assert _walk(monitor, door, [(0.05, True), (0.10, True), (0.05, True)]) == []
+
+
+def test_both_in_the_same_frame_is_refused_rather_than_guessed() -> None:
+    """One frame is not an order. Inventing one would put an unseen crossing on the record."""
+    monitor, door = _preceded()
+
+    assert _walk(monitor, door, [(0.70, True), (0.60, True)]) == []
+
+
+def test_passing_means_inverts_the_pair_for_the_other_camera() -> None:
+    """The sign belongs to the camera, not to the rule."""
+    monitor, door = _preceded(passing_means=Direction.OUT)
+
+    crossings = _walk(monitor, door, [(0.70, False), (0.50, False), (0.20, True)])
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def test_the_ordering_is_reported_so_a_wrong_verdict_can_be_read_back() -> None:
+    seen = []
+    monitor, door = _preceded(report=seen.append)
+
+    _walk(monitor, door, [(0.70, False), (0.50, False), (0.20, True)])
+
+    assert seen, "a track that reached the box must be reported whether or not it counted"
+    touch = seen[-1]
+    # Frames are numbered from 1: the index is advanced before the frame is read.
+    assert touch.outside_at == 1
+    assert touch.covered_at == 3
+    assert "off the box at 1, covered at 3" in touch.order
+    assert "seen off the box first" in touch.order
+
+
+def test_the_slice_order_being_unreadable_does_not_stop_this_rule() -> None:
+    """The failure this rule exists for: coverage arriving all at once, with no order in it.
+
+    The coverage rule needs the slices to light in sequence and gets nothing when somebody close
+    to the lens covers them within a single frame. This rule only needs the person to have been
+    seen somewhere off the box first, which is true of the same walk.
+    """
+    monitor, door = _preceded()
+
+    # One frame of approach, then fully covered instantly -- no gradual sweep at all.
+    crossings = _walk(monitor, door, [(0.80, False), (0.02, True)])
+
+    assert [c.direction for c in crossings] == [Direction.IN]

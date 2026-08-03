@@ -40,6 +40,11 @@ class Hooks:
     # frame loop deliberately: a timer thread that dies takes its schedule silently with it,
     # whereas if frames stop arriving the pipeline is already broken in a louder way.
     tick: Callable[[], None] | None = None
+    # Handed each frame's pixels before the detector runs, for a rule that needs to know whether
+    # the doorframe was covered on this frame. Deliberately not :class:`Attention`: that one
+    # *gates* detection on the box being busy, and a rule asking "was this person visible before
+    # the box was covered" would then only ever see frames from after the moment in question.
+    doorframe: Callable[[object], None] | None = None
 
 
 class Pipeline:
@@ -60,10 +65,12 @@ class Pipeline:
         self._doorway = doorway
         self._sessions = sessions
         self._doorkeeper = doorkeeper
+
         hooks = hooks or Hooks()
         self._announce = hooks.announce or (lambda sighting: None)
         self._on_frame = hooks.on_frame
         self._beat = hooks.tick or (lambda: None)
+        self._doorframe = hooks.doorframe or (lambda image: None)
         self._attention = attention
         self._examined = 0
 
@@ -73,6 +80,9 @@ class Pipeline:
             return
         for frame_index, frame in enumerate(self._source):
             self._beat()
+            # Before the detector, so the coverage a rule reads belongs to this frame rather
+            # than the one before it.
+            self._doorframe(frame.image)
             people = self._tracker.update(frame)
             if people is None:
                 # The frame was never examined (motion gate). Touch no per-track state:

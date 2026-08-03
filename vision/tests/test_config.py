@@ -263,13 +263,53 @@ discriminator = "approach"
     assert tracks.coverage.slices == 5
 
     zones = ZoneStore(tmp_path / "zones")
-    watching, attention = _monitor(pixels, zones)
-    plain, none = _monitor(tracks, zones)
+    watching, attention, watched_box = _monitor(pixels, zones)
+    plain, none, no_box = _monitor(tracks, zones)
 
     assert isinstance(watching, PassageMonitor)
     assert attention is not None   # the pixels also decide when the detector wakes
+    assert watched_box is None     # ...and it is the attention that reads them
     assert isinstance(plain, ThresholdMonitor)
     assert none is None
+    assert no_box is None          # the "approach" rule never asks about the box
+
+
+def test_the_preceded_rule_gets_the_box_read_without_gating_the_detector(
+    tmp_path: Path,
+) -> None:
+    """The rule needs to know when the box was covered, and needs the detector always awake.
+
+    Those pull in opposite directions on every other camera: `Attention` reads the box *and*
+    decides when detection is worth waking. A rule asking "was this person visible before the
+    box was covered" cannot be gated on the box, or it would only ever be shown frames from
+    after the moment it is asking about. So this one gets the pixels and no gate.
+    """
+    from stuhi_vision.assembly import _monitor
+    from stuhi_vision.threshold import ThresholdMonitor
+    from stuhi_vision.zones import ZoneStore
+
+    cfg = config.load(
+        _written(
+            tmp_path,
+            """
+[[camera]]
+name = "doorway"
+target = "http://one/stream"
+zone = [0.0, 0.0, 0.30, 1.0]
+rule = "tracks"
+discriminator = "preceded"
+""",
+        )
+    )
+    (camera,) = cfg.cameras
+
+    monitor, attention, watched_box = _monitor(camera, ZoneStore(tmp_path / "zones"))
+
+    assert isinstance(monitor, ThresholdMonitor)
+    assert attention is None, "no gating: every frame must still reach the detector"
+    assert watched_box is not None, "but the box's pixels still have to be read every frame"
+    # And a redrawn box has to move the pixels being watched, not just the rule's geometry.
+    assert hasattr(watched_box, "use_zone")
 
 
 def test_a_camera_can_set_its_own_motion_gate(tmp_path: Path) -> None:
