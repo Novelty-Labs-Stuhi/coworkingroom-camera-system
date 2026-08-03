@@ -181,3 +181,46 @@ def test_the_image_is_only_measured_for_its_shape() -> None:
     """The rule reads geometry and episode timing, never pixels -- so a stub frame suffices."""
     blank = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
     assert blank.shape[:2] == (HEIGHT, WIDTH)
+
+
+# --- placing a finished episode in time ---------------------------------------------------
+#
+# The seam between the pipeline and this rule. Coverage is only reported once it has *ended*,
+# so the caller has a length and the rule has the frame count -- and an off-by-one here shifts
+# every episode by a frame, which is exactly enough to put it on the wrong side of a track.
+
+
+def test_span_of_places_an_episode_ending_on_the_previous_frame() -> None:
+    rule = _rule()
+    for _ in range(20):
+        rule.observe([], WIDTH, HEIGHT, None)
+
+    # 20 frames seen; a 4-frame episode ended on frame 20, so it began on 17.
+    assert rule.span_of(4) == Episode(17, 20)
+
+
+def test_span_of_before_any_frame_is_degenerate_but_harmless() -> None:
+    """Asked before a single frame has been seen, the span lands on the non-existent frame 0.
+
+    It cannot mislead anything: an episode is only reported once coverage has *ended*, and
+    ending needs a background to compare against, which the first frame is spent learning.
+    So no episode can finish on frame one and this span is never actually produced.
+    """
+    rule = _rule()
+
+    assert rule.span_of(1) == Episode(0, 0)
+
+
+def test_a_span_taken_from_the_rule_lands_on_the_right_side_of_a_track() -> None:
+    """The production sequence: the caller asks for the span, then hands it straight back."""
+    rule = _rule(passing_means=Direction.OUT)
+    verdicts = []
+    for _ in range(8):                       # the person is in view
+        verdicts += rule.observe([_person(1)], WIDTH, HEIGHT, None)
+    # They leave; coverage of 5 frames finishes on the next frame the rule sees.
+    verdicts += rule.observe([], WIDTH, HEIGHT, rule.span_of(5))
+    for _ in range(12):
+        verdicts += rule.observe([], WIDTH, HEIGHT, None)
+
+    assert [v.direction for v in verdicts] == [Direction.OUT]
+    assert verdicts[0].because == "covered after they were last seen"
