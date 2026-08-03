@@ -457,6 +457,16 @@ def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | Non
     detector = entry.detector
     if drawn is not None:
         detector = replace(detector, zone=drawn.as_tuple())
+    # Said out loud at startup, because a drawn zone overrides the config silently and nothing
+    # in config.toml can tell you which is in force. An afternoon was spent measuring the wrong
+    # box on 2026-08-03 for exactly that reason: the file said 0.30, a drawn zone said 0.152,
+    # and the only trace of it was one line written whenever somebody redrew it.
+    _log.info(
+        "%s judging the box %s (%s)",
+        entry.name,
+        [round(value, 3) for value in detector.zone],
+        "drawn in the UI, overriding the config" if drawn is not None else "from the config",
+    )
 
     def report(observation) -> None:
         _log.info("%s %s", entry.name, observation.readable)

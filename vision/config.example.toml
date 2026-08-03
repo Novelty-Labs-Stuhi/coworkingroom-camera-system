@@ -1,5 +1,13 @@
 # Copy to config.toml and adjust for your cameras. All coordinates are in pixels of that
 # camera's image, with (0, 0) at the top-left.
+#
+# !! A ZONE DRAWN IN THE WEB UI OVERRIDES THE `zone` SET HERE. !!
+# Drawn zones live in data/zones/zones.json and win over anything in this file, applied to the
+# running pipeline within seconds and reloaded on restart. The value here is only the fallback
+# for a camera with no drawn zone, so this file alone can never tell you which box is in force.
+# The pipeline logs the effective zone per camera at startup -- "<camera> judging the box [...]"
+# -- and that log line, not this file, is the answer. Trusting the file instead cost an
+# afternoon of measuring a box twice the live width on 2026-08-03.
 
 # One [[camera]] block per camera. With a camera on each side of a doorway, both see every
 # passage -- so give each the direction it can actually see faces for, and it ignores the

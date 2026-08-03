@@ -29,6 +29,11 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--out", required=True)
     parser.add_argument("--rotate", action="store_true", help="camera hangs upside down")
     parser.add_argument("--zone", nargs=4, type=float, default=[0.0, 0.0, 0.30, 1.0])
+    # A zone drawn in the UI overrides the one in config.toml, and reading the config instead
+    # is how an afternoon of 2026-08-03 was spent measuring a box twice the live width. Give
+    # these two and the effective zone is resolved exactly as the pipeline resolves it.
+    parser.add_argument("--camera", help="resolve this camera's effective zone from --zones")
+    parser.add_argument("--zones", help="the zones directory, e.g. data/zones")
     parser.add_argument("--conf", type=float, default=0.3)
     parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--limit", type=int, default=0, help="frames to read (0 = all)")
@@ -55,13 +60,35 @@ def _read(path, rotate: bool):
     return cv2.rotate(image, cv2.ROTATE_180) if rotate else image
 
 
+def _effective_zone(args) -> tuple:
+    """The zone the pipeline would actually use: a drawn one wins over the given one."""
+    if not (args.camera and args.zones):
+        print(
+            f"WARNING: zone {tuple(args.zone)} taken as given. Pass --camera and --zones to "
+            "resolve a drawn zone the way the pipeline does; otherwise this cache may describe "
+            "a box the live system is not using."
+        )
+        return tuple(args.zone)
+
+    from stuhi_vision.zones import ZoneStore
+
+    drawn = ZoneStore(Path(args.zones).expanduser()).get(args.camera)
+    if drawn is None:
+        print(f"{args.camera}: no drawn zone; using {tuple(args.zone)} from the command line")
+        return tuple(args.zone)
+    zone = drawn.as_tuple()
+    print(f"{args.camera}: using the DRAWN zone {tuple(round(v, 4) for v in zone)}")
+    return zone
+
+
 def _cache(args) -> dict:
     from ultralytics import YOLO
 
     from stuhi_vision.occlusion import CoverageConfig, Occlusion
 
     model = YOLO("yolov8n.pt")
-    occlusion = Occlusion(tuple(args.zone), CoverageConfig())
+    zone = _effective_zone(args)
+    occlusion = Occlusion(zone, CoverageConfig())
 
     paths = sorted(Path(args.dir).expanduser().glob("*.jpg"))
     if args.limit:
@@ -107,7 +134,7 @@ def _cache(args) -> dict:
     return {
         "dir": str(Path(args.dir).expanduser()),
         "rotate": args.rotate,
-        "zone": list(args.zone),
+        "zone": list(zone),
         "conf": args.conf,
         "imgsz": args.imgsz,
         "size": size,          # [height, width]
