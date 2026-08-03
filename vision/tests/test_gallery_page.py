@@ -143,4 +143,85 @@ def test_a_name_nobody_has_returns_an_empty_gallery(tmp_path) -> None:
 
     body = client.get("/api/person/nobody/faces").json()
 
-    assert body == {"name": "nobody", "frames": [], "in_use": 0, "kept": 0}
+    assert body == {
+        "name": "nobody",
+        "frames": [],
+        "in_use": 0,
+        "kept": 0,
+        "confirmed": 0,
+        "guessed": 0,
+    }
+
+
+def test_frames_the_system_linked_itself_are_listed_as_unconfirmed(tmp_path) -> None:
+    """An identity the system invented carries its name in ``name``, not ``labelled_as``.
+
+    Listing only the labelled ones left fifty of seventy-one people on a live board with an empty
+    gallery and no portrait while their frames sat on disk.
+    """
+    client, review, _, _ = _setup(tmp_path, [])
+    # What the pipeline files for somebody it could not recognise: a name it invented for them.
+    guessed = review.record(
+        Sighting(
+            timestamp=1_785_000_000.0,
+            direction=Direction.IN,
+            name="guest-0803-070244",
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=None,
+        )
+    )
+
+    body = client.get("/api/person/guest-0803-070244/faces").json()
+
+    assert [frame["id"] for frame in body["frames"]] == [guessed]
+    assert body["kept"] == 1
+    assert body["confirmed"] == 0
+    assert body["guessed"] == 1
+    assert body["frames"][0]["link"] == "guessed"
+    assert body["frames"][0]["confirmed"] is False
+    # It teaches the named gallery nothing until somebody says whose face it is.
+    assert body["frames"][0]["in_use"] is False
+    assert "guess" in body["frames"][0]["why"]
+
+
+def test_naming_a_guessed_frame_makes_it_confirmed(tmp_path) -> None:
+    client, review, _, _ = _setup(tmp_path, [])
+    guessed = review.record(
+        Sighting(
+            timestamp=1_785_000_000.0,
+            direction=Direction.IN,
+            name="guest-0803-070244",
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=None,
+        )
+    )
+
+    client.post("/api/label", json={"sighting_id": guessed, "name": "ilari"})
+
+    assert client.get("/api/person/guest-0803-070244/faces").json()["kept"] == 0
+    named = client.get("/api/person/ilari/faces").json()
+    assert named["confirmed"] == 1 and named["guessed"] == 0
+    assert named["frames"][0]["link"] == "labelled"
+
+
+def test_a_frame_set_aside_as_nobody_does_not_come_back_under_the_guessed_name(tmp_path) -> None:
+    """Somebody looked at it and said it belongs to no one. Re-listing it argues with them."""
+    client, review, _, _ = _setup(tmp_path, [])
+    aside = review.record(
+        Sighting(
+            timestamp=1_785_000_000.0,
+            direction=Direction.IN,
+            name="guest-0803-070244",
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=None,
+        )
+    )
+    review.label(aside, "unknown")
+
+    assert client.get("/api/person/guest-0803-070244/faces").json()["kept"] == 0

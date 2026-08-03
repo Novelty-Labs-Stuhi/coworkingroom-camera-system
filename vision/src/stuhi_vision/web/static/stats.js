@@ -4,7 +4,9 @@
 // page -- which somebody else may be editing at the same time.
 
 // Which period is shown, and how many of them back. Offset 0 is the one running now.
-let window_ = 'streak';
+// Today by default: it is the question somebody opening this page is actually asking, and it is
+// the only window whose figures can be checked against what you remember of the day.
+let window_ = 'day';
 let offset = 0;
 let filter = '';
 

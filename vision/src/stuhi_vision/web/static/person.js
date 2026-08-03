@@ -15,7 +15,9 @@ async function load() {
 
   document.getElementById('who').textContent = person.name || 'nobody';
   document.getElementById('summary').textContent =
-    `${person.in_use} of ${person.kept} faces are used for recognition.`;
+    `${person.kept} frame(s) linked: ${person.confirmed} confirmed, of which `
+    + `${person.in_use} used for recognition`
+    + (person.guessed ? `, and ${person.guessed} the system has only guessed.` : '.');
   document.getElementById('back-to-profile').href =
     `/profile?name=${encodeURIComponent(name)}`;
 
@@ -94,6 +96,8 @@ function paint(article, frame) {
   article.classList.toggle('using', frame.in_use);
   article.classList.toggle('idle', !frame.in_use);
   article.classList.toggle('decided', frame.decided !== null);
+  // An unconfirmed frame is the one to look at: naming it is what turns it into evidence.
+  article.classList.toggle('unconfirmed', !frame.confirmed);
 
   article.querySelector('.state').textContent = frame.in_use
     ? `used for recognition — ${frame.why}`
@@ -102,10 +106,16 @@ function paint(article, frame) {
   article.querySelector('.numbers').textContent =
     `${when} · ${frame.direction} · ${frame.closeness} like the average`;
 
-  // Only the actions that would change something are offered.
-  article.querySelector('.use').disabled = frame.decided === true;
-  article.querySelector('.drop').disabled = frame.decided === false;
-  article.querySelector('.auto').disabled = frame.decided === null;
+  // Only the actions that would change something are offered. Deciding whether recognition may
+  // use a frame is meaningless while nobody has said whose face it is -- there is no gallery for
+  // it to be in or out of yet -- so on an unconfirmed frame naming it is the only offer.
+  const undecidable = !frame.confirmed;
+  article.querySelector('.use').disabled = undecidable || frame.decided === true;
+  article.querySelector('.drop').disabled = undecidable || frame.decided === false;
+  article.querySelector('.auto').disabled = undecidable || frame.decided === null;
+  article.querySelector('.relabel').textContent = frame.confirmed
+    ? 'this is somebody else'
+    : 'name this face';
 }
 
 async function decide(article, frame, wanted) {

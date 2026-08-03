@@ -82,7 +82,12 @@ def header_for(
         # The face to show, and how many are behind it -- the picture is the way into the
         # gallery, so it says what it opens.
         "picture": representative(view["frames"]),
-        "faces": {"in_use": view["in_use"], "kept": view["kept"]},
+        "faces": {
+            "in_use": view["in_use"],
+            "kept": view["kept"],
+            "confirmed": view["confirmed"],
+            "guessed": view["guessed"],
+        },
         "totals": {
             window: {"seconds": round(seconds, 1), "readable": readable(seconds)}
             for window, seconds in totals(found, epoch, now).items()

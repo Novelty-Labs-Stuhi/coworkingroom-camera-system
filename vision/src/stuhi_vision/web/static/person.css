@@ -6,6 +6,12 @@
 .frame.idle .state { color: var(--muted); }
 .frame.decided { border-style: dashed; }
 
+/* A frame the system linked on its own. It is the one worth acting on -- naming it is what turns
+   a picture the system merely guessed at into evidence for a real person -- so it is marked
+   rather than left looking like a confirmed face that happens to be unused. */
+.frame.unconfirmed { border-color: var(--warn); border-style: dashed; }
+.frame.unconfirmed .state { color: var(--warn); }
+
 .frame .numbers { margin: .2rem 0 .4rem; font-size: .78rem; color: var(--muted); }
 .frame .actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .frame .actions button { font-size: .8rem; padding: .3rem .55rem; }

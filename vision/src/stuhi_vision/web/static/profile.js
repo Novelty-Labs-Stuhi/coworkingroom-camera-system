@@ -41,9 +41,23 @@ function showPortrait(profile) {
     face.src = `/media/${profile.picture}.jpg`;
     face.alt = profile.name;
   }
-  document.getElementById('faces').textContent = profile.faces.kept
-    ? `${profile.faces.in_use} of ${profile.faces.kept} faces are used to recognise them.`
-    : 'No faces are filed under this name yet.';
+  document.getElementById('faces').textContent = facesSay(profile.faces);
+}
+
+// A name with frames nobody has confirmed is not a name with no frames, and saying "no faces"
+// about somebody whose picture is on the screen above is the sort of thing that makes a page
+// untrustworthy. Three genuinely different states, so three sentences.
+function facesSay(faces) {
+  if (!faces.kept) return 'No frames are linked to this name yet.';
+  if (!faces.confirmed) {
+    const many = faces.kept === 1 ? '1 frame is' : `${faces.kept} frames are`;
+    return `${many} linked to this name, none confirmed — it is an identity the system invented `
+      + 'for somebody it did not recognise. Name it to file those frames under a real person.';
+  }
+  const rest = faces.guessed
+    ? ` ${faces.guessed} more ${faces.guessed === 1 ? 'is' : 'are'} the system's own guess.`
+    : '';
+  return `${faces.in_use} of ${faces.confirmed} confirmed faces are used to recognise them.${rest}`;
 }
 
 function showBio(bio) {

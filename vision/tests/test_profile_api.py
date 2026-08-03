@@ -105,8 +105,8 @@ def test_the_picture_is_the_face_closest_to_the_average(tmp_path) -> None:
 
     assert profile["picture"] != odd
     assert profile["picture"] == frames[0]["id"]     # in use, closest to the average
-    # Nine kept, and four fifths of nine is seven of them matched against.
-    assert profile["faces"] == {"in_use": 7, "kept": 9}
+    # Nine kept, all confirmed by a label, and four fifths of nine is seven matched against.
+    assert profile["faces"] == {"in_use": 7, "kept": 9, "confirmed": 9, "guessed": 0}
     history.close()
 
 
@@ -125,17 +125,73 @@ def test_a_person_with_no_saved_picture_has_no_portrait(tmp_path) -> None:
 def test_a_face_in_use_is_preferred_over_a_marginally_closer_unused_one() -> None:
     """A profile should not be represented by a picture the system has stopped believing in."""
     frames = [
-        {"id": "old", "in_use": False, "closeness": 0.99, "has_picture": True},
-        {"id": "current", "in_use": True, "closeness": 0.90, "has_picture": True},
+        {"id": "old", "in_use": False, "confirmed": True, "closeness": 0.99,
+         "timestamp": 200.0, "has_picture": True},
+        {"id": "current", "in_use": True, "confirmed": True, "closeness": 0.90,
+         "timestamp": 100.0, "has_picture": True},
     ]
 
     assert representative(frames) == "current"
 
 
+def test_an_identity_the_system_invented_still_gets_a_portrait(tmp_path) -> None:
+    """The reported fault: a guest with a saved frame showed no picture and "no faces".
+
+    The frame and its vector were on disk the whole time. Only human-labelled frames were being
+    looked for, and a name the system invents for itself is not in ``labelled_as``.
+    """
+    at = _hours_ago(4)
+    client, review, history = _client(tmp_path, [("guest-0803-070244", at, "in")])
+    review.record(
+        Sighting(
+            timestamp=at,
+            direction=Direction.IN,
+            name="guest-0803-070244",
+            score=0.2,
+            outcome=Outcome.UNKNOWN,
+            face_embedding=np.array([1.0, 0.0, 0.0]),
+            face_crop=object(),
+        ),
+        encode_jpeg=lambda _crop: b"not really a jpeg",
+    )
+
+    profile = client.get("/api/profile/guest-0803-070244").json()
+
+    assert profile["picture"] is not None
+    assert profile["faces"] == {"in_use": 0, "kept": 1, "confirmed": 0, "guessed": 1}
+    history.close()
+
+
+def test_a_confirmed_face_is_preferred_over_a_guessed_one_for_the_portrait() -> None:
+    """A guess has no closeness to rank on, so without this every guess ties with real evidence."""
+    frames = [
+        {"id": "guess", "in_use": False, "confirmed": False, "closeness": 0.0,
+         "timestamp": 200.0, "has_picture": True},
+        {"id": "named", "in_use": False, "confirmed": True, "closeness": 0.4,
+         "timestamp": 100.0, "has_picture": True},
+    ]
+
+    assert representative(frames) == "named"
+
+
+def test_among_guesses_the_newest_wins_and_the_answer_is_stable() -> None:
+    frames = [
+        {"id": "older", "in_use": False, "confirmed": False, "closeness": 0.0,
+         "timestamp": 100.0, "has_picture": True},
+        {"id": "newer", "in_use": False, "confirmed": False, "closeness": 0.0,
+         "timestamp": 300.0, "has_picture": True},
+    ]
+
+    assert representative(frames) == "newer"
+    assert representative(list(reversed(frames))) == "newer"   # order of the list cannot matter
+
+
 def test_a_face_with_no_picture_is_never_the_portrait() -> None:
     frames = [
-        {"id": "vector-only", "in_use": True, "closeness": 0.99, "has_picture": False},
-        {"id": "has-one", "in_use": False, "closeness": 0.10, "has_picture": True},
+        {"id": "vector-only", "in_use": True, "confirmed": True, "closeness": 0.99,
+         "timestamp": 200.0, "has_picture": False},
+        {"id": "has-one", "in_use": False, "confirmed": True, "closeness": 0.10,
+         "timestamp": 100.0, "has_picture": True},
     ]
 
     assert representative(frames) == "has-one"
