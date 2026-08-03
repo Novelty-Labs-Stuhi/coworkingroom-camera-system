@@ -17,7 +17,7 @@ from .attention import Attention
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
 from .continuity import RESET, DayBoundary, open_visits, partition, start_of_day
-from .domain import Sighting
+from .domain import Direction, Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
 from .handlers import Doorkeeper, Enrolment, Identifier
@@ -552,6 +552,10 @@ def _directional(reported: str, publisher: SightingPublisher, announce):
     return hold
 
 
+def _flip(direction: Direction) -> Direction:
+    return Direction.OUT if direction is Direction.IN else Direction.IN
+
+
 def _shadow(camera: str, entry: CameraConfig, attention: Attention | None):
     """Run the ordering rule beside the live one, reporting only. Never commits.
 
@@ -563,7 +567,15 @@ def _shadow(camera: str, entry: CameraConfig, attention: Attention | None):
     """
     if attention is None or not isinstance(entry.detector, ThresholdConfig):
         return None
-    rule = OrderingRule(entry.detector)
+    # `passing_means` says which direction *going through the doorframe* is, and the two rules
+    # disagree about when that happened. The slice rule applies it when the covering travelled
+    # towards the configured edge; this one applies it when the coverage came *after* the track
+    # -- they walked to the door and left. On this camera those are opposite, so the value
+    # calibrated for the live rule is inverted here. Determined by measurement, not reasoning:
+    # scored against recorded footage, only this way round agrees with the one passage confirmed
+    # by eye. It is the same trap `inside_side` sets, and the reason the shadow logs its reason
+    # alongside its verdict -- so a flipped sign shows up as nonsense rather than as a number.
+    rule = OrderingRule(replace(entry.detector, passing_means=_flip(entry.detector.passing_means)))
 
     def watch(frame, people) -> None:
         height, width = frame.image.shape[:2]
