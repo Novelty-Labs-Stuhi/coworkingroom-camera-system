@@ -27,32 +27,25 @@ from starlette.requests import Request
 
 from ..names import parse_names
 from ..presence import (
-    Passage,
     available_from,
-    epoch_for,
+    counting_from,
+    covered,
     leaderboard,
     readable,
+    recorded_visits,
     streaks,
+    totals,
     unclosed,
-    visits_from,
     window_bounds,
 )
+from ..profiles import ProfileStore
 from ..review import ReviewQueue
 from ..zones import DrawnZone, ZoneStore
+from .assets import asset_version
+from .faces import gallery_view
+from .profile import add_profile_routes
 
 _HERE = Path(__file__).parent
-_STATIC = _HERE / "static"
-
-
-def _asset_version() -> str:
-    """A token that changes when the static files do, for cache-busting their URLs.
-
-    Without it a browser keeps yesterday's stylesheet: a CSS fix that squeezed the name field
-    to 41 px was deployed, served correctly, and still broken on screen. Telling somebody to
-    hard-refresh is not a fix, it is a thing to remember forever.
-    """
-    newest = max((path.stat().st_mtime for path in _STATIC.glob("*")), default=0.0)
-    return str(int(newest))
 
 
 class LabelRequest(BaseModel):
@@ -175,7 +168,12 @@ def _apply_label(review: ReviewQueue, sighting_id: str, text: str) -> JSONRespon
 
 
 def _not_yet(window: str, offset: int, epoch: float, now: float, ready: float) -> JSONResponse:
-    """A window that has not passed yet says so, and says when it will mean something."""
+    """Counting has not begun, or has only just begun. Says which, and when it will mean
+    something.
+
+    The only remaining case: either the epoch is in the future (switched on before 04:30 today)
+    or it is less than five minutes old. Everything after that shows its figures.
+    """
     return JSONResponse(
         {
             "window": window,
@@ -184,6 +182,9 @@ def _not_yet(window: str, offset: int, epoch: float, now: float, ready: float) -
             "until": now,
             "ready": False,
             "ready_at": ready,
+            "days_covered": 0,
+            "days_in_window": 0,
+            "partial": False,
             "standings": [],
         }
     )
@@ -205,34 +206,27 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
     the answer, and a stored total would be wrong until somebody remembered to rebuild it.
     """
 
-    # Where the epoch is written down. Beside the review data, because it belongs to this
-    # deployment rather than to the code.
-    epoch_path = review.directory / "stats-epoch.json"
-
     def visits(since: float):
         """Visits from the crossings, ignoring everything before counting began."""
-        return visits_from(
-            Passage(name=name, at=at, direction=direction)
-            for name, at, direction in history.passages()
-            if at >= since
-        )
+        return recorded_visits(history.passages(), since)
 
     @app.get("/api/leaderboard")
     def board(window: str = "week", offset: int = 0) -> JSONResponse:
         """Who spent the longest in the room, over one window, ``offset`` windows back.
 
-        Nothing before counting began is included, and a window says nothing until one of it
-        has passed since then. A week's board on its second day looks like a week's while
-        being a day's, which is worse than an empty page saying when it will mean something.
+        Nothing before counting began is included, and every window shows what it has five
+        minutes after that. A window the record does not fully cover says so -- ``days_covered``
+        of ``days_in_window`` -- rather than being withheld until it does.
         """
         now = time.time()
-        epoch = epoch_for(epoch_path)
+        epoch = counting_from(review.directory)
         ready = available_from(window, epoch)
         if now < ready:
             return _not_yet(window, offset, epoch, now, ready)
 
         found = visits(epoch)
         standings, start, end = _standings(window, offset, found, epoch, now)
+        days_covered, days_in_window = covered(window, offset, epoch, now)
         return JSONResponse(
             {
                 "window": window,
@@ -241,6 +235,12 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
                 "until": end,
                 "ready": True,
                 "ready_at": ready,
+                # How much of the asked-for window is actually behind these figures. The page
+                # says "3 of 7 days so far" with it, which is the honest version of hiding the
+                # board altogether.
+                "days_covered": days_covered,
+                "days_in_window": days_in_window,
+                "partial": bool(days_in_window and days_covered < days_in_window),
                 "standings": [
                     {
                         "name": standing.name,
@@ -263,18 +263,16 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
     def person(name: str) -> JSONResponse:
         """One person's own figures, and every visit behind them."""
         now = time.time()
-        epoch = epoch_for(epoch_path)
+        epoch = counting_from(review.directory)
         found = [visit for visit in visits(epoch) if visit.name == name]
-        totals = {}
-        for window in ("day", "week", "month", "year", "all"):
-            start, end = window_bounds(window, 0, now)
-            held = sum(visit.overlap(max(start, epoch), end, now) for visit in found)
-            totals[window] = {"seconds": round(held, 1), "readable": readable(held)}
         run = next((s.seconds for s in streaks(found, now) if s.name == name), 0.0)
         return JSONResponse(
             {
                 "name": name,
-                "totals": totals,
+                "totals": {
+                    window: {"seconds": round(seconds, 1), "readable": readable(seconds)}
+                    for window, seconds in totals(found, epoch, now).items()
+                },
                 "streak_days": int(run),
                 "inside": any(visit.left is None for visit in found),
                 "visits": [
@@ -298,7 +296,7 @@ def _add_presence_routes(app: FastAPI, review: ReviewQueue, history) -> None:
         wrong name -- and that mistake is necessarily one of these.
         """
         open_visits = sorted(
-            unclosed(visits(epoch_for(epoch_path))), key=lambda visit: -visit.entered
+            unclosed(visits(counting_from(review.directory))), key=lambda visit: -visit.entered
         )
         listed = []
         for visit in open_visits:
@@ -364,13 +362,17 @@ def _add_api_routes(app: FastAPI, review: ReviewQueue) -> None:
         return _apply_label(review, body.sighting_id, body.name)
 
 
-def _apply_rename(review: ReviewQueue, history, ledger, body: RenameRequest) -> JSONResponse:
+def _apply_rename(
+    review: ReviewQueue, history, ledger, profiles: ProfileStore, body: RenameRequest
+) -> JSONResponse:
     """Correct one name wherever it was used.
 
     Merges when the corrected name already exists, because that is what "ilari" and "Ilari"
     being one person means. The history is included deliberately: leaving both spellings there
     makes one person read as two who each came and went half the time. And whoever is inside
     right now moves with it, or their exit would arrive under a name nobody is holding.
+
+    The bio moves too. Spelling somebody's name properly should not cost them their profile.
     """
     names = parse_names(body.new)
     if len(names) != 1:
@@ -382,6 +384,7 @@ def _apply_rename(review: ReviewQueue, history, ledger, body: RenameRequest) -> 
     events = history.rename(body.old, corrected) if history is not None else 0
     if ledger is not None:
         ledger.rename(body.old, corrected)
+    profiles.rename(body.old, corrected)
     return JSONResponse(
         {
             "renamed": corrected,
@@ -487,7 +490,7 @@ def _add_person_routes(app: FastAPI, review: ReviewQueue) -> None:
     @app.get("/gallery")
     def gallery_page(request: Request):
         return Jinja2Templates(directory=str(_HERE / "templates")).TemplateResponse(
-            request, "person.html", {"assets": _asset_version()}
+            request, "person.html", {"assets": asset_version()}
         )
 
     @app.get("/api/person/{name}/faces")
@@ -498,7 +501,7 @@ def _add_person_routes(app: FastAPI, review: ReviewQueue) -> None:
         closest to that person's average within them. The second is the order to check the
         gallery in: it is the faces at the top that decide who somebody is.
         """
-        return JSONResponse(_person_dict(review, name, sort))
+        return JSONResponse(gallery_view(review, name, sort))
 
     @app.post("/api/use-face")
     def use_face(body: UseFaceRequest) -> JSONResponse:
@@ -515,56 +518,9 @@ def _add_person_routes(app: FastAPI, review: ReviewQueue) -> None:
         )
 
 
-def _person_dict(review: ReviewQueue, name: str, sort: str) -> dict:
-    """This person's faces, in the asked-for order, each saying whether it is in use and why."""
-    from ..selection import distances
-
-    records = {
-        record.sighting_id: record
-        for record in review.everything()
-        if record.labelled_as == name and not record.dismissed
-    }
-    picked = review.chosen.get(name)
-    used = set(getattr(picked, "used", ()))
-    reasons = {
-        **{sighting: "too old" for sighting in getattr(picked, "too_old", ())},
-        **{sighting: "unlike the average" for sighting in getattr(picked, "too_odd", ())},
-        **{sighting: "you asked for it" for sighting in getattr(picked, "pinned", ())},
-        **{sighting: "you excluded it" for sighting in getattr(picked, "barred", ())},
-    }
-    ages = {sighting: record.timestamp for sighting, record in records.items()}
-    closeness = distances(
-        [r for r in review.references() if r.name == name], ages
-    )
-
-    frames = [
-        {
-            "id": sighting,
-            "timestamp": record.timestamp,
-            "direction": record.direction,
-            "in_use": sighting in used,
-            "why": reasons.get(sighting, "in use" if sighting in used else "not chosen"),
-            "closeness": round(closeness.get(sighting, 0.0), 3),
-            "decided": record.use_for_matching,
-            "rejected_because": record.rejected_because,
-        }
-        for sighting, record in records.items()
-    ]
-    if sort == "used":
-        # In use first, then closest to the average: the order the gallery is judged in, since
-        # it is the faces at the top that decide who somebody is.
-        frames.sort(key=lambda frame: (not frame["in_use"], -frame["closeness"]))
-    else:
-        frames.sort(key=lambda frame: frame["timestamp"], reverse=True)
-    return {
-        "name": name,
-        "frames": frames,
-        "in_use": len(used),
-        "kept": len(frames),
-    }
-
-
-def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -> None:
+def _add_correction_routes(
+    app: FastAPI, review: ReviewQueue, history, ledger, profiles: ProfileStore
+) -> None:
     """Taking a label back, and correcting a name everywhere it was used."""
 
     @app.post("/api/dismiss")
@@ -578,7 +534,7 @@ def _add_correction_routes(app: FastAPI, review: ReviewQueue, history, ledger) -
     @app.post("/api/rename")
     def rename(body: RenameRequest) -> JSONResponse:
         """Correct a spelling everywhere: the gallery, every labelled clip, and the history."""
-        return _apply_rename(review, history, ledger, body)
+        return _apply_rename(review, history, ledger, profiles, body)
 
     @app.post("/api/unlabel")
     def unlabel(body: DismissRequest) -> JSONResponse:
@@ -717,29 +673,35 @@ def create_app(
     app = FastAPI(title="stuhi labelling")
     templates = Jinja2Templates(directory=str(_HERE / "templates"))
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
+    # Beside the review data, like the epoch: it belongs to this deployment, not to the code.
+    # Built here rather than passed in, so a deployment gains profiles without being rewired.
+    profiles = ProfileStore(review.directory / "profiles.json")
 
     @app.get("/")
     def index(request: Request):
         return templates.TemplateResponse(
-            request, "index.html", {"assets": _asset_version(), "page": "label"}
+            request, "index.html", {"assets": asset_version(), "page": "label"}
         )
 
     @app.get("/stats")
     def stats_page(request: Request):
         return templates.TemplateResponse(
-            request, "stats.html", {"assets": _asset_version(), "page": "stats"}
+            request, "stats.html", {"assets": asset_version(), "page": "stats"}
         )
 
     @app.get("/zones")
     def zones_page(request: Request):
         return templates.TemplateResponse(
-            request, "zones.html", {"assets": _asset_version(), "page": "zones"}
+            request, "zones.html", {"assets": asset_version(), "page": "zones"}
         )
 
     _add_api_routes(app, review)
-    _add_correction_routes(app, review, history, ledger)
+    _add_correction_routes(app, review, history, ledger, profiles)
     _add_person_routes(app, review)
     _add_accounting_routes(app, review, history, passages)
+    # Registered even with no history: a profile still has a name, a bio and a picture, and the
+    # dated parts of it say they have nothing rather than the page failing to open.
+    add_profile_routes(app, review, profiles, history, templates)
     if history is not None:
         _add_presence_routes(app, review, history)
     _add_media_routes(app, review)

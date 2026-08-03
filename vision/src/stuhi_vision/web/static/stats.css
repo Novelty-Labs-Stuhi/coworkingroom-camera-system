@@ -25,6 +25,9 @@
 /* Stepping back through past periods. The label between the arrows says which one is shown,
    because "week" with no dates cannot be told from last week. */
 .stepping { display: flex; align-items: center; gap: .5rem; font-size: .85rem; color: var(--muted); }
+/* A window the record does not fully cover. The figures are real; the period is shorter than
+   the tab name, and that is worth noticing rather than hiding the board over. */
+#covering.short { color: var(--warn); }
 .stepping button {
   background: transparent;
   border: 1px solid var(--line);
@@ -61,16 +64,16 @@
   padding: .45rem .7rem;
 }
 .rank { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 1.5rem; }
-.board .who {
-  background: transparent;
-  border: none;
-  padding: 0;
+/* The name is a link to that person's profile, but it must still read as the name rather than
+   as a link in a wall of them -- so it keeps the row's own look until it is pointed at. */
+.board .who,
+.visits .who {
   color: var(--text);
-  font: inherit;
   font-weight: 600;
-  cursor: pointer;
+  text-decoration: none;
 }
-.board .who:hover { color: var(--accent); filter: none; }
+.board .who:hover,
+.visits .who:hover { color: var(--accent); text-decoration: underline; }
 .held { margin-left: auto; color: var(--ok); font-variant-numeric: tabular-nums; }
 .detail { color: var(--muted); font-size: .8rem; }
 .here {
@@ -92,11 +95,6 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.visits .who { font-weight: 600; }
-
 /* The still from the entry that may carry the wrong name. Small: it is there to recognise the
    person by, not to label from -- labelling happens on the other page. */
 .entry-face { height: 2.6rem; border-radius: 4px; margin-left: auto; }
-
-#person-panel h2 { display: flex; align-items: center; gap: .6rem; }
-#person-panel h3 { font-size: .95rem; margin: 1.2rem 0 .4rem; }

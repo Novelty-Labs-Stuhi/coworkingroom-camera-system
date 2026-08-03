@@ -271,8 +271,14 @@ The bot token and chat id are read from `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID
 environment, never from the config file, so they cannot be committed. With them unset the
 pipeline runs exactly as before, just without announcements.
 
-One honest limitation: relabelling teaches the gallery and fixes the review record, but it
-does **not** rewrite the SQLite occupancy event, which keeps the name it was recorded with.
+Relabelling now also rewrites the crossing in the SQLite event log, so the presence figures
+follow a correction (`ReviewQueue._correct_history`). Naming an identity the *system* invented
+corrects every crossing it ever made, since that says who it always was; correcting one clip
+of a real person corrects only that crossing.
+
+The web UI at `:8800` carries the same operations as the chat route, plus the leaderboard and
+one page per person — see [profiles.md](profiles.md) for what a profile shows, how the activity
+chart is derived, and why the profile picture is the face closest to that person's average.
 
 ## Why these boundaries
 

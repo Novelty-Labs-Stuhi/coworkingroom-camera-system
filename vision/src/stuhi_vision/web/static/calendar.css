@@ -1,0 +1,97 @@
+/* The activity chart. Its own stylesheet because it is a widget rather than a page: a second
+   page wanting one should need one link, not a copy of these rules.
+
+   The shades are mixed from the same green the leaderboard uses for time in the room, so the
+   two pages agree about what "time here" looks like. */
+
+.cal {
+  --box: 11px;
+  --gap: 3px;
+}
+
+/* A year is wider than most windows, so the chart scrolls rather than squeezing the boxes into
+   something too small to hover. The month row scrolls with it, or the labels would drift off
+   the columns they belong to. */
+.cal-scroller {
+  overflow-x: auto;
+  padding-bottom: .35rem;
+}
+
+.cal-months,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--weeks), var(--box));
+  gap: var(--gap);
+}
+
+.cal-months {
+  margin-left: calc(2.2rem + var(--gap));
+  margin-bottom: .2rem;
+  font-size: .68rem;
+  color: var(--muted);
+}
+.cal-months span { white-space: nowrap; }
+
+.cal-body { display: flex; gap: var(--gap); }
+
+.cal-weekdays {
+  display: grid;
+  grid-template-rows: repeat(7, var(--box));
+  gap: var(--gap);
+  width: 2.2rem;
+  font-size: .68rem;
+  color: var(--muted);
+}
+/* The label sits on the middle of its row rather than the top of it. */
+.cal-weekdays span { line-height: var(--box); }
+
+.cal-grid {
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, var(--box));
+}
+
+/* One day. A button because it is one -- clicking opens that day, and a div would leave the
+   chart unreachable by keyboard. */
+.box {
+  width: var(--box);
+  height: var(--box);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.box:hover { outline: 1px solid var(--text); outline-offset: 1px; filter: none; }
+.box.chosen { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Nothing, then four steps to the busiest day in the chart. */
+.box.l0 { background: color-mix(in srgb, var(--line) 55%, var(--bg)); }
+.box.l1 { background: color-mix(in srgb, var(--ok) 28%, var(--panel)); }
+.box.l2 { background: color-mix(in srgb, var(--ok) 50%, var(--panel)); }
+.box.l3 { background: color-mix(in srgb, var(--ok) 74%, var(--panel)); }
+.box.l4 { background: var(--ok); }
+
+/* A day nobody was counting on is not a day off, and must not look like one. Empty with a
+   dashed edge: visibly "no data" rather than visibly "nought hours". */
+.box.uncounted {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--line) 80%, var(--bg));
+  cursor: default;
+}
+
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  margin-top: .4rem;
+  font-size: .68rem;
+  color: var(--muted);
+}
+.cal-legend i {
+  display: block;
+  width: var(--box);
+  height: var(--box);
+  border-radius: 2px;
+}
+.cal-legend span:first-child { margin-right: .1rem; }
+.cal-legend span:last-child { margin-left: .1rem; }

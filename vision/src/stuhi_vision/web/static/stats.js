@@ -40,8 +40,8 @@ function sayWhy(board, shown) {
     started > new Date()
       ? `Counting starts at ${asMoment(board.from)}. Nothing is recorded against these `
         + 'figures until then.'
-      : `Counting began at ${asMoment(board.from)}. This period has one of it to run: `
-        + `it will mean something from ${when.toLocaleString()}.`;
+      : `Counting began at ${asMoment(board.from)}, moments ago. The boards fill in from `
+        + `${when.toLocaleTimeString()}.`;
 }
 
 function showCovering(board) {
@@ -53,8 +53,14 @@ function showCovering(board) {
   } else if (!board.ready) {
     note.textContent = 'not yet';
   } else {
-    note.textContent = `${asDay(board.from)} to ${asDay(board.until)}`;
+    // A window the record does not fully cover says so. These are real figures over a shorter
+    // period than the tab names, and reading them as a whole week's would be the mistake.
+    const span = `${asDay(board.from)} to ${asDay(board.until)}`;
+    note.textContent = board.partial
+      ? `${span} — ${board.days_covered} of ${board.days_in_window} days so far`
+      : span;
   }
+  note.classList.toggle('short', Boolean(board.partial));
   // There is no window after the one running now, so stepping forward from it is meaningless.
   document.getElementById('later').disabled = offset === 0;
   const stepping = window_ === 'streak' || window_ === 'all';
@@ -79,12 +85,10 @@ function renderBoard(rows) {
       rank.className = 'rank';
       rank.textContent = place + 1;
 
-      // The name opens their own figures: a board answers "who", a person answers "when".
-      const name = document.createElement('button');
-      name.type = 'button';
-      name.className = 'who';
-      name.textContent = row.name;
-      name.addEventListener('click', () => showPerson(row.name));
+      // The name opens their profile: a board answers "who", a profile answers everything
+      // else about one of them. A link rather than a button, so it can be opened in a new tab
+      // and so the address of a profile is a thing that can be sent to somebody.
+      const name = profileLink(row.name);
 
       const time = document.createElement('b');
       time.className = 'held';
@@ -108,51 +112,12 @@ function renderBoard(rows) {
   );
 }
 
-async function showPerson(name) {
-  const response = await fetch(`/api/person/${encodeURIComponent(name)}`);
-  if (!response.ok) return;
-  const figures = await response.json();
-
-  document.getElementById('person-panel').hidden = false;
-  document.getElementById('person-name').textContent =
-    figures.inside ? `${name} — in the room now` : name;
-
-  const totals = document.getElementById('person-totals');
-  const labels = { day: 'today', week: 'this week', month: 'this month', year: 'this year', all: 'all time' };
-  totals.replaceChildren(
-    ...Object.entries(labels).map(([window, label]) => {
-      const item = document.createElement('li');
-      const strong = document.createElement('b');
-      strong.textContent = figures.totals[window].readable;
-      const span = document.createElement('span');
-      span.textContent = ` ${label}`;
-      item.append(strong, span);
-      return item;
-    }),
-    streakChip(figures.streak_days)
-  );
-
-  const visits = document.getElementById('person-visits');
-  visits.replaceChildren(
-    ...figures.visits.map((visit) => {
-      const item = document.createElement('li');
-      item.textContent = visit.left
-        ? `${asMoment(visit.entered)} → ${asMoment(visit.left)} · ${visit.readable}`
-        : `${asMoment(visit.entered)} → still inside · ${visit.readable}`;
-      return item;
-    })
-  );
-  document.getElementById('person-panel').scrollIntoView({ behavior: 'smooth' });
-}
-
-function streakChip(days) {
-  const item = document.createElement('li');
-  const strong = document.createElement('b');
-  strong.textContent = `${days} day(s)`;
-  const span = document.createElement('span');
-  span.textContent = ' in a row';
-  item.append(strong, span);
-  return item;
+function profileLink(name) {
+  const link = document.createElement('a');
+  link.className = 'who';
+  link.href = `/profile?name=${encodeURIComponent(name)}`;
+  link.textContent = name;
+  return link;
 }
 
 function asMoment(seconds) {
@@ -174,11 +139,7 @@ async function loadInside() {
   document.getElementById('inside').replaceChildren(
     ...inside.map((entry) => {
       const item = document.createElement('li');
-      const name = document.createElement('button');
-      name.type = 'button';
-      name.className = 'who';
-      name.textContent = entry.name;
-      name.addEventListener('click', () => showPerson(entry.name));
+      const name = profileLink(entry.name);
 
       const when = document.createElement('span');
       when.textContent = ` came in ${asMoment(entry.entered)}, ${entry.for} ago`;
@@ -221,9 +182,6 @@ document.getElementById('later').addEventListener('click', () => {
 document.getElementById('search').addEventListener('input', (event) => {
   filter = event.target.value.trim().toLowerCase();
   load();
-});
-document.getElementById('close-person').addEventListener('click', () => {
-  document.getElementById('person-panel').hidden = true;
 });
 
 load();

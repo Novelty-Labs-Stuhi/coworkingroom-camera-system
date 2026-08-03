@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stuhi &mdash; profile</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ assets }}">
+  <link rel="stylesheet" href="/static/nav.css?v={{ assets }}">
+  <link rel="stylesheet" href="/static/calendar.css?v={{ assets }}">
+  <link rel="stylesheet" href="/static/profile.css?v={{ assets }}">
+</head>
+<body>
+  {% include "nav.html" %}
+  <p class="nav"><a href="/stats">&larr; Back to the leaderboard</a></p>
+
+  <header class="profile">
+    {# The picture opens the gallery: which frames the system has filed as this person, and
+       which of them it is matching against. #}
+    <a class="portrait" id="portrait" href="#" title="the faces recognition uses for this person">
+      <img id="portrait-face" alt="" hidden>
+      <span class="no-face" id="no-face">no picture yet</span>
+      <span class="portrait-hint">see the frames</span>
+    </a>
+
+    <div class="who">
+      <h1>
+        <span id="name">&hellip;</span>
+        <span class="here" id="in-now" hidden>in now</span>
+        <button type="button" class="fix" id="rename">edit name</button>
+      </h1>
+      <p class="hint faces" id="faces"></p>
+
+      <form class="renaming" id="renaming" hidden>
+        <input class="name" id="new-name" placeholder="the correct name" autocomplete="off"
+               spellcheck="false">
+        <button type="submit">Save</button>
+        <button type="button" class="reject" id="cancel-rename">Cancel</button>
+        <p class="hint">
+          This is the label the system uses. Correcting it here corrects it everywhere &mdash;
+          the gallery, every frame filed under it, and every entry and exit in the record. Giving
+          a name that already exists merges the two, which is what one person with two spellings
+          needs.
+        </p>
+      </form>
+
+      <div class="bio" id="bio-shown">
+        <p id="bio-text" class="bio-text"></p>
+        <button type="button" class="fix" id="edit-bio">add a bio</button>
+      </div>
+      <form class="bio-form" id="bio-form" hidden>
+        <textarea id="bio-input" rows="3" maxlength="500"
+                  placeholder="A line or two about this person."></textarea>
+        <div class="bio-actions">
+          <button type="submit">Save</button>
+          <button type="button" class="reject" id="cancel-bio">Cancel</button>
+          <span class="hint" id="bio-left"></span>
+        </div>
+      </form>
+
+      <ul class="people" id="totals"></ul>
+      <p class="result" id="header-result" role="status"></p>
+    </div>
+  </header>
+
+  <section id="activity-panel">
+    <h2>Activity</h2>
+    <p class="hint">
+      One box a day, darkest on this person's own busiest day &mdash; so the shades say how a
+      day compares with their others, not with anybody else's. A day runs 04:30 to 04:30.
+      Click one to see the entries and exits it is made of.
+    </p>
+    <div class="cal" id="calendar"></div>
+    <p class="empty" id="activity-empty" hidden>Nothing is recorded for this person yet.</p>
+  </section>
+
+  <section id="day-panel" hidden>
+    <h2><span id="day-title"></span>
+      <button type="button" id="close-day" class="reject">close</button></h2>
+    <p class="hint" id="day-summary"></p>
+    <ol id="day-timeline" class="timeline"></ol>
+    <p class="empty" id="day-empty">No entries or exits were recorded on this day.</p>
+  </section>
+
+  <template id="crossing-template">
+    <li class="crossing">
+      <span class="at"></span>
+      <span class="way"></span>
+      <img class="frame" alt="the frame this crossing was decided from" hidden>
+      <span class="filed"></span>
+      <button type="button" class="fix correct">wrong?</button>
+      <form class="correcting" hidden>
+        <input class="name" placeholder="who it really was" autocomplete="off" spellcheck="false">
+        <button type="submit">Save</button>
+        <button type="button" class="reject cancel">Cancel</button>
+      </form>
+      <p class="result" role="status"></p>
+    </li>
+  </template>
+
+  <script src="/static/calendar.js?v={{ assets }}"></script>
+  <script src="/static/profile.js?v={{ assets }}"></script>
+</body>
+</html>

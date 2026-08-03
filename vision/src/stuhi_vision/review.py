@@ -601,7 +601,12 @@ class ReviewQueue:
             self._gallery.rename(old, new)
             self._gallery.save(self._gallery_dir)
             self._flush()
-            return moved
+        # The matching set is keyed by name, so without this the references move to the corrected
+        # spelling while recognition goes on matching -- and announcing -- the old one, until a
+        # restart or the next label happens to rebuild it. A rename that does not reach the
+        # recogniser is not a rename. Every other correction here already ends this way.
+        self.refresh_matching()
+        return moved
 
     def composite_labels(self) -> list[ReviewRecord]:
         """Labels that are really several names in one string.

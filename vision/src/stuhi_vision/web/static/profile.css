@@ -1,0 +1,154 @@
+/* The profile page. Its own stylesheet, like every other page here: they are worked on
+   separately, sometimes at the same time. It borrows app.css for the shell -- colours, buttons,
+   chips, the name field -- and calendar.css for the chart. */
+
+.nav { margin: 0 0 1rem; font-size: .85rem; }
+.nav a { color: var(--muted); text-decoration: none; }
+.nav a:hover { color: var(--accent); }
+
+/* The picture beside everything that is written about the person. It wraps on a narrow window
+   rather than shrinking the portrait: a face too small to recognise is not doing its job. */
+header.profile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  align-items: flex-start;
+  margin-bottom: 2.5rem;
+}
+header.profile .who { flex: 1 1 20rem; min-width: 15rem; }
+header.profile h1 { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+
+/* The portrait is a link into the gallery, so it has to look like one thing you can press --
+   and say what pressing it does, because "the picture opens the frames behind it" is not
+   something anybody guesses. */
+.portrait {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: 8.5rem;
+  height: 8.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  overflow: hidden;
+  text-decoration: none;
+}
+.portrait:hover { border-color: var(--accent); }
+.portrait img {
+  width: 100%;
+  height: 100%;
+  /* Cover, not contain: this is a portrait, and a crop is already a face filling its frame. */
+  object-fit: cover;
+  display: block;
+}
+.portrait .no-face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: .5rem;
+  text-align: center;
+  font-size: .8rem;
+  color: var(--muted);
+}
+.portrait-hint {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: .2rem .4rem;
+  font-size: .7rem;
+  text-align: center;
+  color: var(--text);
+  background: rgb(0 0 0 / 55%);
+  opacity: 0;
+  transition: opacity .12s;
+}
+.portrait:hover .portrait-hint,
+.portrait:focus-visible .portrait-hint { opacity: 1; }
+
+.faces { margin: 0 0 .5rem; font-size: .85rem; }
+
+/* What somebody wrote about themselves, in their own paragraph so the line breaks they typed
+   survive. Quiet when empty: an absent bio is normal, not a gap to be filled. */
+.bio { margin: .5rem 0 1rem; }
+.bio-text { margin: 0 0 .25rem; white-space: pre-wrap; max-width: 60ch; }
+.bio-text.none { color: var(--muted); font-style: italic; }
+
+.bio-form { margin: .5rem 0 1rem; max-width: 60ch; }
+.bio-form textarea {
+  width: 100%;
+  padding: .5rem .6rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .95rem;
+  resize: vertical;
+}
+.bio-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bio-actions { display: flex; align-items: center; gap: .5rem; margin-top: .5rem; }
+.bio-actions .hint { margin: 0; font-size: .78rem; }
+
+/* Correcting the name. Its own block under the heading rather than a browser prompt: it needs
+   room to say what it will do, because it changes every record carrying the old name. */
+#renaming { margin: .5rem 0 1rem; max-width: 60ch; }
+#renaming .hint { flex: 1 1 100%; margin: .25rem 0 0; font-size: .78rem; }
+
+.here {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  border-radius: 4px;
+  padding: 0 .35rem;
+  font-size: .72rem;
+  font-weight: 400;
+}
+
+/* The small quiet controls: editing a name or a bio is occasional, and neither should compete
+   with the figures. Same look as the labelling page's, for the same reason. */
+.fix {
+  padding: .1rem .45rem;
+  font-size: .72rem;
+  font-weight: 400;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.fix:hover { border-color: var(--accent); color: var(--text); filter: none; }
+
+#activity-panel .hint { max-width: 66ch; }
+
+/* One day's entries and exits. Each row is a moment, what happened, the frame it was decided
+   from, and a way to say it is wrong. */
+.timeline { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .35rem; }
+.crossing {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .6rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: .4rem .7rem;
+}
+.crossing .at {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 3.6rem;
+}
+.crossing .way { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+.crossing .way.in { color: var(--ok); }
+.crossing .way.out { color: var(--accent); }
+/* Small: it is here to recognise a face in, and the gallery is where a face is studied. */
+.crossing .frame { height: 3rem; border-radius: 4px; }
+.crossing .filed { font-size: .82rem; color: var(--muted); }
+.crossing .filed.none { font-style: italic; }
+/* The frame says one name and the crossing says another. That is the disagreement this page
+   exists to surface, so it is the one thing in the row that is coloured as a warning. */
+.crossing .filed.disagrees { color: var(--warn); }
+.crossing .correct { margin-left: auto; }
+.crossing .correcting { display: flex; flex-wrap: wrap; gap: .3rem; flex: 1 1 100%; }
+.crossing .correcting .name { flex: 1 1 8rem; font-size: .85rem; padding: .25rem .45rem; }
+.crossing .correcting button { padding: .25rem .5rem; font-size: .78rem; }
+.crossing .result { flex: 1 1 100%; margin: 0; }
+
+#day-panel h2 { display: flex; align-items: center; gap: .6rem; }

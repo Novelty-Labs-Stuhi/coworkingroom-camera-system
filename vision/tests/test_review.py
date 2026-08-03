@@ -243,6 +243,28 @@ def test_renaming_onto_an_existing_name_merges_them(tmp_path) -> None:
     assert review.counts() == {"ilari": 2}
 
 
+def test_renaming_reaches_the_recogniser_not_only_the_record(tmp_path) -> None:
+    """A rename that the matching set does not follow would keep announcing the old name.
+
+    The matching set is keyed by name. Moving the references without rebuilding it left
+    recognition matching against the old spelling until a restart -- so the correction showed
+    up everywhere a human looked and nowhere the system did.
+    """
+    review, gallery = _queue(tmp_path)
+    for index in range(5):
+        review.label(
+            review.record(_sighting(np.array([1.0, 0.004 * index, 0.0]))), "yehor"
+        )
+    assert gallery.matching_counts == {"yehor": 4}
+
+    review.rename("yehor", "Yehor")
+
+    assert gallery.matching_counts == {"Yehor": 4}
+    assert sorted(review.chosen) == ["Yehor"]
+    # And a face of theirs is now named with the corrected spelling.
+    assert gallery.rank(np.array([1.0, 0.008, 0.0]))[0].name == "Yehor"
+
+
 def test_renaming_survives_a_reload(tmp_path) -> None:
     review, _ = _queue(tmp_path)
     review.label(review.record(_sighting()), "yehor")

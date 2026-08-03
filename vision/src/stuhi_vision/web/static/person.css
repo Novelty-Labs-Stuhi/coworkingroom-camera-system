@@ -12,3 +12,19 @@
 .frame .actions .use[disabled],
 .frame .actions .drop[disabled],
 .frame .actions .auto[disabled] { opacity: .35; }
+
+/* "Is this person somebody else" is a rarer and larger question than "should this face be
+   matched against", so it sits below those three, quiet until it is wanted. */
+.frame .fix {
+  margin-top: .5rem;
+  padding: .15rem .45rem;
+  font-size: .74rem;
+  font-weight: 400;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.frame .fix:hover { border-color: var(--warn); color: var(--warn); filter: none; }
+.frame .relabelling { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; }
+.frame .relabelling .name { flex: 1 1 7rem; font-size: .85rem; padding: .25rem .45rem; }
+.frame .relabelling button { padding: .25rem .5rem; font-size: .78rem; }

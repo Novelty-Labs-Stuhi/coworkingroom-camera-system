@@ -9,14 +9,22 @@
 </head>
 <body>
   <header>
-    <p class="nav"><a href="/">&larr; Back to labelling</a></p>
+    <p class="nav">
+      <a id="back-to-profile" href="/stats">&larr; Back to the profile</a>
+      &middot; <a href="/">Labelling</a>
+    </p>
     <h1 id="who">&hellip;</h1>
     <p class="hint" id="summary"></p>
     <p class="hint">
-      Recognition does not use every face kept for somebody. It uses the newest 50, and of
-      those the 80% closest to their average &mdash; the ones dropped for being unlike it still
-      shape that average, because they are still that person. Anything you add or remove here
-      overrules that, and your choice is kept.
+      Every frame the system has filed under this name. Recognition does not use all of them:
+      it uses the newest 50, and of those the 80% closest to their average &mdash; the ones
+      dropped for being unlike it still shape that average, because they are still that person.
+      Anything you add or remove here overrules that, and your choice is kept.
+    </p>
+    <p class="hint">
+      If a frame is somebody else, correct it here. That takes the face out of this person's
+      gallery, puts it in the right one, and moves the crossing it came from &mdash; so the
+      hours follow the correction too.
     </p>
     <p class="hint" id="ordering">
       Order:
@@ -38,6 +46,14 @@
         <button type="button" class="drop reject">Do not use</button>
         <button type="button" class="auto reject" title="let the rule decide again">Automatic</button>
       </div>
+      {# Correcting who a frame is, as opposed to whether it is used. A different question, so
+         it is behind its own control rather than beside the three that answer the other one. #}
+      <button type="button" class="fix relabel">this is somebody else</button>
+      <form class="relabelling" hidden>
+        <input class="name" placeholder="who it really is" autocomplete="off" spellcheck="false">
+        <button type="submit">Save</button>
+        <button type="button" class="reject cancel">Cancel</button>
+      </form>
       <p class="result" role="status"></p>
     </article>
   </template>

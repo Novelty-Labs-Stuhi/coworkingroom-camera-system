@@ -17,6 +17,16 @@ normal case rather than an error, and each is treated as what it is:
 The office day begins at **04:30**, not midnight: somebody in the room at one in the morning
 is finishing the previous day rather than starting a new one, and a boundary at midnight would
 split that visit across two days and break a streak that should stand.
+
+Two different "start" moments live here, and they are easy to confuse:
+
+* **04:30** is where each *day* begins, above. It is about which day a visit belongs to.
+* the **epoch** is when *counting* began for this deployment (:func:`epoch_for`) -- fixed the
+  first time it is asked for, so past totals do not silently rewrite themselves each morning.
+  Nothing before it is counted at all.
+
+A window shorter than the record is shown anyway, labelled with how much of itself it covers
+(:func:`covered`). It is only the first five minutes after the epoch that show nothing.
 """
 
 from __future__ import annotations
@@ -114,6 +124,38 @@ def visits_from(passages: Iterable[Passage]) -> list[Visit]:
     return sorted(visits, key=lambda visit: visit.entered)
 
 
+def recorded_visits(passages: Iterable[tuple[str, float, str]], since: float) -> list[Visit]:
+    """Visits from the rows the event store keeps, ignoring everything before ``since``.
+
+    The one place the store's tuples become visits. Every page asking about time in the room
+    asks the same question of the same log, and two spellings of this step would eventually
+    disagree about something -- which window the epoch cuts, most likely.
+    """
+    return visits_from(
+        Passage(name=name, at=at, direction=direction)
+        for name, at, direction in passages
+        if at >= since
+    )
+
+
+def totals(visits: Sequence[Visit], epoch: float, now: float) -> dict[Window, float]:
+    """One person's seconds in the room over each window, as their own figures.
+
+    Clipped to the epoch as well as to the window: "this year" cannot honestly include time
+    from before anybody was counting.
+    """
+    figures: dict[Window, float] = {}
+    for window in ("day", "week", "month", "year", "all"):
+        start, end = window_bounds(window, 0, now)
+        figures[window] = sum(visit.overlap(max(start, epoch), end, now) for visit in visits)
+    return figures
+
+
+def counting_from(directory: Path) -> float:
+    """When counting began for this deployment, from the file beside its review data."""
+    return epoch_for(directory / "stats-epoch.json")
+
+
 def epoch_for(path: Path) -> float:
     """When counting begins, fixed the first time it is asked for and never moved after.
 
@@ -133,17 +175,46 @@ def epoch_for(path: Path) -> float:
     return starts
 
 
-def available_from(window: Window, epoch: float) -> float:
-    """When a window first has anything to say.
+def window_days(window: Window) -> int:
+    """How many office days one of these windows is, for the windows that are a fixed length."""
+    return {"day": 1, "week": 7, "month": 30, "year": 365}.get(window, 1)
 
-    A week's leaderboard on its second day is not a week's leaderboard -- it looks like one
-    while being a day's, which is worse than showing nothing. So each window waits until one
-    of it has actually passed since counting began. The running total and the streak start
-    with the epoch itself: both are honest from the first minute, being explicitly "so far".
+
+# How long after counting begins before any board says anything: long enough that the very
+# first moments of a deployment read as "just started" rather than "nobody was here", short
+# enough that nobody waits for it.
+GRACE_SECONDS = 5 * 60.0
+
+
+def available_from(window: Window, epoch: float) -> float:
+    """When a window first has anything to say: five minutes after counting began.
+
+    It used to be one whole window -- a week's board waited seven days, a year's waited a year.
+    The reasoning was that a week's board on its second day looks like a week's while being a
+    day's. The reasoning was right and the remedy was wrong: it left three of the six tabs
+    blank on a working system with hundreds of recorded crossings behind them, and the year tab
+    blank until 2027. Hiding real figures to avoid mislabelling them is the worse trade.
+
+    So every window shows what it has, and says how much of itself it actually covers -- see
+    :func:`covered`. A partial week is labelled a partial week instead of being withheld.
+    """
+    return epoch + GRACE_SECONDS
+
+
+def covered(window: Window, offset: int, epoch: float, now: float) -> tuple[int, int]:
+    """How many office days of this window the record covers, and how many it has.
+
+    ``(3, 7)`` means "three days of this week are behind these figures". Equal numbers mean the
+    window is whole. Zero days in the window means the question does not apply -- "all time" and
+    a streak are not a fixed length, so there is no fraction of them to be short of.
     """
     if window in ("all", "streak"):
-        return epoch
-    return epoch + {"day": 1, "week": 7, "month": 30, "year": 365}.get(window, 1) * 24 * 3600
+        return 0, 0
+    whole = window_days(window)
+    start, end = window_bounds(window, offset, now)
+    first = office_day(max(start, epoch))
+    last = office_day(min(end, now))
+    return max(0, (last - first).days + 1), whole
 
 
 def office_day(moment: float) -> date:
@@ -168,7 +239,7 @@ def window_bounds(window: Window, offset: int, now: float) -> tuple[float, float
     if window == "all":
         return 0.0, now
 
-    length = {"day": 1, "week": 7, "month": 30, "year": 365}.get(window, 1)
+    length = window_days(window)
     start_day = today - timedelta(days=length * offset + (length - 1))
     start = day_starting(start_day)
     end = day_starting(today - timedelta(days=length * offset)) + 24 * 3600

@@ -162,8 +162,14 @@ def test_nothing_is_counted_before_counting_begins(tmp_path) -> None:
     history.close()
 
 
-def test_a_window_says_nothing_until_one_of_it_has_passed(tmp_path) -> None:
-    """A week's board on its second day looks like a week's while being a day's."""
+def test_a_part_worn_window_shows_its_figures_and_says_it_is_partial(tmp_path) -> None:
+    """A week's board on its second day is shown, labelled as two days rather than withheld.
+
+    It used to be withheld until a whole week had passed since counting began. That left three
+    of the six tabs blank on a working system with hundreds of crossings behind them -- and the
+    year tab blank for a year. Hiding real figures to avoid mislabelling them is the worse
+    trade; labelling them is the fix.
+    """
     client, _, history = _client(
         tmp_path,
         [("ilari", _hours_ago(3), "in"), ("ilari", _hours_ago(1), "out")],
@@ -171,13 +177,46 @@ def test_a_window_says_nothing_until_one_of_it_has_passed(tmp_path) -> None:
     )
 
     week = client.get("/api/leaderboard?window=week").json()
+    year = client.get("/api/leaderboard?window=year").json()
+
+    assert week["ready"] is True
+    assert [row["name"] for row in week["standings"]] == ["ilari"]
+    assert week["partial"] is True
+    assert (week["days_covered"], week["days_in_window"]) == (1, 7)
+    # Even the year's board, which used to be blank until the next year.
+    assert year["ready"] is True and year["standings"]
+    assert (year["days_covered"], year["days_in_window"]) == (1, 365)
+    history.close()
+
+
+def test_a_whole_window_is_not_called_partial(tmp_path) -> None:
+    client, _, history = _client(
+        tmp_path,
+        [("ilari", _hours_ago(3), "in"), ("ilari", _hours_ago(1), "out")],
+        counting_since=_hours_ago(24 * 40),
+    )
+
+    week = client.get("/api/leaderboard?window=week").json()
     running = client.get("/api/leaderboard?window=all").json()
 
-    assert week["ready"] is False and week["standings"] == []
-    assert week["ready_at"] > time.time()          # and says when it will mean something
-    # The running total is honest from the first minute, being explicitly "so far".
-    assert running["ready"] is True
-    assert [row["name"] for row in running["standings"]] == ["ilari"]
+    assert week["partial"] is False
+    assert (week["days_covered"], week["days_in_window"]) == (7, 7)
+    # "All time" and a streak are not a fixed length, so there is no fraction to fall short of.
+    assert running["partial"] is False
+    assert running["days_in_window"] == 0
+    history.close()
+
+
+def test_nothing_is_shown_in_the_first_few_minutes_of_counting(tmp_path) -> None:
+    """A grace period, so a deployment's first moments read as "just started"."""
+    client, _, history = _client(
+        tmp_path, [("ilari", _hours_ago(3), "in")], counting_since=time.time() - 60
+    )
+
+    board = client.get("/api/leaderboard?window=week").json()
+
+    assert board["ready"] is False and board["standings"] == []
+    assert board["ready_at"] > time.time()          # and says when it will mean something
     history.close()
 
 

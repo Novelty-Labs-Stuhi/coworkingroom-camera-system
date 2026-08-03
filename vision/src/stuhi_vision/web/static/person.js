@@ -16,6 +16,8 @@ async function load() {
   document.getElementById('who').textContent = person.name || 'nobody';
   document.getElementById('summary').textContent =
     `${person.in_use} of ${person.kept} faces are used for recognition.`;
+  document.getElementById('back-to-profile').href =
+    `/profile?name=${encodeURIComponent(name)}`;
 
   const host = document.getElementById('frames');
   host.replaceChildren(...person.frames.map(build));
@@ -39,7 +41,53 @@ function build(frame) {
   article.querySelector('.drop').addEventListener('click', () => decide(article, frame, false));
   // Undoing a decision is not the opposite decision: it is handing the frame back to the rule.
   article.querySelector('.auto').addEventListener('click', () => decide(article, frame, null));
+  wireRelabel(article, frame);
   return article;
+}
+
+function wireRelabel(article, frame) {
+  const form = article.querySelector('.relabelling');
+  const field = form.querySelector('.name');
+
+  article.querySelector('.relabel').addEventListener('click', () => {
+    form.hidden = !form.hidden;
+    if (!form.hidden) field.focus();
+  });
+  form.querySelector('.cancel').addEventListener('click', () => { form.hidden = true; });
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    relabel(article, frame, field.value);
+  });
+}
+
+async function relabel(article, frame, to) {
+  const result = article.querySelector('.result');
+  if (!to.trim()) {
+    result.className = 'result bad';
+    result.textContent = 'give a name';
+    return;
+  }
+  result.className = 'result';
+  result.textContent = 'saving…';
+  try {
+    const response = await fetch('/api/label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sighting_id: frame.id, name: to }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      result.className = 'result bad';
+      result.textContent = body.detail || 'failed';
+      return;
+    }
+    // Reloaded, because the frame has left this gallery: showing it here with a new name would
+    // be showing it in the wrong person's page.
+    load();
+  } catch (error) {
+    result.className = 'result bad';
+    result.textContent = String(error);
+  }
 }
 
 function paint(article, frame) {
