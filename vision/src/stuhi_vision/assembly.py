@@ -27,6 +27,7 @@ from .ledger import Ledger
 from .merges import MergeLog
 from .notify import TelegramNotifier
 from .occlusion import Occlusion
+from .ordering import OrderingRule
 from .passage import PassageMonitor
 from .pipeline import FrameObserver, Hooks, Pipeline
 from .presence import office_day
@@ -364,7 +365,10 @@ def _build_camera(
         doorkeeper=committer,
         hooks=Hooks(
             announce=_directional(entry.announce, publisher, announce),
-            on_frame=_frame_hook(publisher, observer, entry.name, shared, drift),
+            on_frame=_frame_hook(
+                publisher, observer, entry.name, shared, drift,
+                shadow=_shadow(entry.name, entry, attention),
+            ),
             tick=_tick(shared.boundary, Heartbeat(shared.heartbeats / entry.name)),
         ),
         attention=attention,
@@ -548,17 +552,50 @@ def _directional(reported: str, publisher: SightingPublisher, announce):
     return hold
 
 
+def _shadow(camera: str, entry: CameraConfig, attention: Attention | None):
+    """Run the ordering rule beside the live one, reporting only. Never commits.
+
+    It resolves five of the six tracks in the recorded footage where the live rule resolves
+    three, and produces both directions where the live rule produces one -- but six tracks is
+    six tracks, and their ground truth was read by eye from the same ordering this rule uses,
+    so the agreement is not independent evidence. Running it here costs a dictionary update a
+    frame and settles the question against real traffic in a day.
+    """
+    if attention is None or not isinstance(entry.detector, ThresholdConfig):
+        return None
+    rule = OrderingRule(entry.detector)
+
+    def watch(frame, people) -> None:
+        height, width = frame.image.shape[:2]
+        # Non-None on exactly the frame an episode finishes, so no de-duplication is needed
+        # and none is kept -- a set of every span a camera ever saw is a slow leak.
+        finished = attention.episode()
+        episode = rule.span_of(finished.frames) if finished is not None else None
+        for verdict in rule.observe(people, width, height, episode):
+            _log.info("%s [shadow ordering] %s", camera, verdict.readable)
+
+    return watch
+
+
 def _frame_hook(
     publisher: SightingPublisher,
     observer: FrameObserver | None,
     camera: str,
     shared: _Shared,
     drift: DriftWatch,
+    shadow=None,
 ):
     """Per frame: advance the publisher, keep the frame, and watch for a moved camera."""
 
     def on_frame(frame, people, crossings) -> None:
         publisher.advance(people_present=bool(people))
+        if shadow is not None:
+            # Reporting only, and never allowed to take the pipeline down with it: a rule on
+            # trial must not be able to stop the one doing the work.
+            try:
+                shadow(frame, people)
+            except Exception:
+                _log.exception("%s shadow ordering rule failed", camera)
         # Only empty frames: a person is a large moving object and would drag the
         # correlation with them, reading as a camera that had moved.
         if not people:
