@@ -545,12 +545,30 @@ class ReviewQueue:
             }
         chosen = choose(references, ages, decided)
         vectors = {r.sighting_id: r.embedding for r in references}
-        self._gallery.use_only(
-            {
-                name: [vectors[sighting] for sighting in picked.used if sighting in vectors]
-                for name, picked in chosen.items()
-            }
-        )
+        matching = {
+            name: [vectors[sighting] for sighting in picked.used if sighting in vectors]
+            for name, picked in chosen.items()
+        }
+        # A name with no reviewed faces matches against whatever the gallery holds for it.
+        #
+        # Without this, an identity enrolled by any route other than a human label is invisible
+        # to recognition -- and one of those routes is the system inventing an identity for an
+        # unrecognised arrival, whose entire purpose is that the same person is matched to it
+        # next time instead of becoming somebody else again. They never were, so a stranger who
+        # came through eight times became eight people, none of whom could ever be recognised
+        # and every one of whom had to be named by hand.
+        #
+        # The selection rules are not applied to these: choosing the newest few and the closest
+        # to their average needs an average to be close to, and a name here has one face. The
+        # risk is that the one face is a poor one, and a poor face matches too much -- but it is
+        # bounded by what it can spoil. A stranger absorbed into a guest identity costs nobody
+        # their hours, and the merge that a human's label performs is now reversible.
+        for name in self._gallery.names:
+            if not matching.get(name):
+                held = self._gallery.references_for(name)
+                if held:
+                    matching[name] = held
+        self._gallery.use_only(matching)
         self._chosen = chosen
 
     @property

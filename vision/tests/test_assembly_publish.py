@@ -91,6 +91,7 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
         boundary=None,
         heartbeats=tmp_path / "heartbeat",
         provisional=None,
+        strangers=None,
     )
     image = np.zeros((4, 4, 3), dtype=np.uint8)
     camera = [Frame(timestamp=float(i), image=image) for i in range(3)]

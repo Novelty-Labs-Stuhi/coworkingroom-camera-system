@@ -82,6 +82,15 @@ class FaceGallery:
             self._references.setdefault(new, []).extend(vectors)
             return len(vectors)
 
+    def drop(self, name: str) -> int:
+        """Remove a name and every face under it. Returns how many were removed.
+
+        Distinct from ``rename``, which moves faces somewhere else: this is for an identity
+        that should stop existing -- one that has been named, or one that has expired.
+        """
+        with self._lock:
+            return len(self._references.pop(name, []))
+
     def discard(self, name: str, embedding: np.ndarray) -> bool:
         """Remove one reference vector from ``name``; used when a label is corrected."""
         with self._lock:

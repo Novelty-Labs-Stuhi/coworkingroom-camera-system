@@ -39,7 +39,10 @@ class Enrolment:
     Doorkeeper's signature about what it does rather than about where things are kept.
     """
 
-    gallery: object | None = None
+    # Where an unnamed identity's own face is kept. Deliberately *not* the named gallery:
+    # an uncertain face must be unable to reach the references a real person is recognised
+    # by, and a separate store enforces that by construction rather than by remembering to.
+    strangers: object | None = None
     directory: Path | None = None
     provisional: object | None = None
 
@@ -109,16 +112,28 @@ class Doorkeeper:
             name = decision.name
             introduced = False
         else:
-            name = self._someone_new(session, timestamp)
-            introduced = True
+            name, introduced = self._someone_new(session, timestamp)
         embedding = session.entry_embedding
         if embedding is None:
             embedding = session.body_embedding  # no face frame; use the sharpest body
         self._ledger.enter(name, embedding, timestamp, self._camera)
         return name, introduced
 
-    def _someone_new(self, session: TrackSession, timestamp: float) -> str:
-        """A fresh identity for somebody nobody recognised -- and *enrol their face under it*.
+    def _someone_new(self, session: TrackSession, timestamp: float) -> tuple[str, bool]:
+        """Somebody the recogniser could not name: met before, or genuinely new?
+
+        Asked in that order, because the two answers have very different consequences. If this
+        is a stranger we have already met, they keep the identity they were given -- so their
+        exit can be attributed and their entry closes, which is what keeps the count right. It
+        is only when nobody is recognisable that a new identity is created, and it is created
+        rather than forced onto the nearest name the gallery happens to hold.
+
+        The bar for "same stranger" is lower than the bar for "this is Ilari" on purpose. Being
+        cautious here bought nothing and cost an identity per visit: a stranger who came through
+        eight times became eight people, none of whom could ever be recognised, and the room
+        filled with occupants whose exits could never be matched.
+
+        Nothing here touches the named gallery. Returns the name and whether it is new.
 
         Two things were wrong with the old guest label. It came from a counter that starts at
         one in every process, so a restart re-issued names that already existed and two
@@ -130,15 +145,20 @@ class Doorkeeper:
         Enrolled, an unnamed identity behaves like a person: the next arrival matches it, their
         exit can be attributed, and it can later be given a real name or merged into one.
         """
+        strangers = self._enrolment.strangers
+        if strangers is not None:
+            met_before = strangers.recognise(session.face_embedding)
+            if met_before is not None:
+                _log.info("%s recognised %s, somebody still unnamed", self._camera, met_before)
+                return met_before, False
+
         name = f"guest-{datetime.fromtimestamp(timestamp).strftime('%m%d-%H%M%S')}"
-        gallery = self._enrolment.gallery
-        if session.face_embedding is not None and gallery is not None:
-            gallery.add(name, session.face_embedding)
-            gallery.save(self._enrolment.directory)
-            _log.info("%s enrolled %s as somebody new", self._camera, name)
+        if strangers is not None:
+            strangers.remember(name, session.face_embedding)
         if self._enrolment.provisional is not None:
             self._enrolment.provisional.add(name)
-        return name
+        _log.info("%s met somebody new: %s", self._camera, name)
+        return name, True
 
     def _exit(self, session: TrackSession, decision: Decision, timestamp: float) -> str | None:
         """Leave, named by the best evidence available, in order of how direct it is.

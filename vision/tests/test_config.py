@@ -203,6 +203,7 @@ role = "identify"
         gallery=None,
         gallery_dir=tmp_path / "gallery",
         provisional=None,
+        strangers=None,
     )
     assert isinstance(_committer(counter, object(), shared, 2), Doorkeeper)
     assert isinstance(_committer(namer, object(), shared, 2), Identifier)

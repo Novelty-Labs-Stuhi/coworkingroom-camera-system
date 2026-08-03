@@ -49,14 +49,15 @@ class Resemblance:
         )
 
 
-def _reference(gallery, name: str):
+def _reference(store, name: str):
     """One embedding standing for this identity, or None if it holds no faces."""
-    references = gallery.references_for(name)
+    references = store.references_for(name)
     return references[0] if references else None
 
 
 def suggestions(
     gallery,
+    strangers,
     provisional: set[str],
     counts: dict[str, int] | None = None,
     similarity: float = SIMILARITY,
@@ -67,13 +68,15 @@ def suggestions(
     ``counts`` maps a name to how many crossings it has, so the offer can say how much is at
     stake. Absent, the pairs are still correct, just less informative.
     """
+    # Only people with names live in the gallery now, so nothing has to be filtered out
+    # of it -- the provisional faces are in their own store.
     named = [name for name in gallery.names if name not in provisional]
     if not named:
         return []
 
     found: list[Resemblance] = []
     for candidate in sorted(provisional):
-        embedding = _reference(gallery, candidate)
+        embedding = _reference(strangers, candidate)
         if embedding is None:
             continue
         # Only people with names compete. Ranking against other provisional identities would

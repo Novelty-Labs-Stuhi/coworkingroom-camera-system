@@ -41,6 +41,7 @@ from .sessions import SessionManager
 from .sources import open_source
 from .sources.buffered import BufferedSource
 from .store import EventStore, PassageStore
+from .strangers import Strangers
 from .threshold import ThresholdConfig, ThresholdMonitor
 from .tracking import GatedTracker, PersonTracker
 from .visualization import encode_jpeg
@@ -89,6 +90,9 @@ class _Shared:
     # Identities the system named itself, awaiting a human's. The one pile worth interrupting
     # somebody for, and so the only thing that reaches the chat.
     provisional: Provisional
+    # Their faces, kept apart from the named gallery so recognising a returning stranger
+    # cannot degrade recognition of somebody with a name.
+    strangers: Strangers
 
 
 @dataclass(slots=True)
@@ -221,6 +225,11 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
     # yesterday's occupants into today untouched.
     boundary = _resume(ledger, store)
     provisional = Provisional(config.paths.gallery_dir.parent / "provisional")
+    # Faces of people nobody has named, kept in their own store so an uncertain face cannot
+    # reach the references a real person is recognised by. The count depends on a returning
+    # stranger being matched to the identity they already have; this is what allows that
+    # without letting their face compete against Ilari's.
+    strangers = Strangers(config.paths.gallery_dir.parent / "strangers")
     # Written before any identity is folded into another, so a mistaken merge can be undone
     # rather than having fused two people's histories for good.
     merges = MergeLog(config.paths.review_dir.parent / "merges.jsonl")
@@ -265,6 +274,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         boundary=boundary,
         heartbeats=config.paths.review_dir.parent / "heartbeat",
         provisional=provisional,
+        strangers=strangers,
     )
     cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     # The UI is started last: it serves frames and drift readings that only exist once the
@@ -386,7 +396,7 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
         # So an unrecognised arrival's face is enrolled under their new identity, the same
         # person coming back is matched to it rather than becoming somebody else again, and
         # the labelling page can tell an invented name from one a human chose.
-        enrolment=Enrolment(shared.gallery, shared.gallery_dir, shared.provisional),
+        enrolment=Enrolment(shared.strangers, shared.gallery_dir, shared.provisional),
     )
 
 
