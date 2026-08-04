@@ -125,15 +125,42 @@ class Pipeline:
         The approach frames go through the *whole* stage -- tracking and the session that
         recognises faces -- because a face seen on the way to the door is the only look at
         somebody who then crosses it side-on.
+
+        When the newest chunk of the approach shows nobody, earlier chunks are asked for one at
+        a time until somebody appears or the buffer runs out. Nothing is spent reaching back
+        past the answer: most passages are settled by the first chunk, and only the awkward ones
+        pay for more.
         """
         people: list[TrackedPerson] = []
-        for examined in self._attention.examine(frame):
-            seen = self._tracker.update(examined)
-            if seen is None:
-                continue
-            people = seen
-            self._sessions.observe(examined, seen, self._examined)
-            self._examined += 1
+        chunk = self._attention.examine(frame)
+        while chunk:
+            people = self._run_over(chunk, live_at=frame.timestamp) or people
+            if people:
+                break
+            # Nobody in that chunk. The frames before it are the only place left to look, and
+            # they are the difference between a counted passage and one refused for having
+            # nobody on it -- which is most of the ones refused.
+            chunk = self._attention.earlier()
         if people:
             self._sessions.prune({person.track_id for person in people}, self._examined)
+        return people
+
+    def _run_over(self, chunk: list, live_at: float) -> list[TrackedPerson]:
+        """Track and recognise over one chunk, oldest first.
+
+        The doorway is told about each *replayed* frame with the coverage that frame actually
+        had, so a rule reading the order of things sees the approach as uncovered and the
+        crossing as covered -- which is what they were. The live frame is left to the caller,
+        which tells the doorway about it once per tick whether or not anything was examined.
+        """
+        people: list[TrackedPerson] = []
+        for seen in chunk:
+            found = self._tracker.update(seen.frame)
+            if found is None:
+                continue
+            people = found
+            self._sessions.observe(seen.frame, found, self._examined)
+            if seen.frame.timestamp != live_at:
+                self._doorway.update(found, seen.frame, covered=seen.covered)
+            self._examined += 1
         return people

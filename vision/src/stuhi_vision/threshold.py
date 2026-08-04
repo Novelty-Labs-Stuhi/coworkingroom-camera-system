@@ -190,14 +190,27 @@ class ThresholdMonitor:
         """
         self._config = replace(self._config, zone=zone)
 
-    def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
-        """Feed one frame's tracked people; return crossings for tracks that just ended."""
+    def update(
+        self,
+        people: Iterable[TrackedPerson],
+        frame: Frame,
+        covered: bool | None = None,
+    ) -> list[Crossing]:
+        """Feed one frame's tracked people; return crossings for tracks that just ended.
+
+        ``covered`` is the doorframe's state **on this frame**. Passed in when the frame is a
+        replayed one, because by then the box is covered and asking it now would say so for
+        every frame of the approach -- which is the difference between "seen before the
+        covering" and "seen after it", and so the whole direction. Left out, it is asked of the
+        live doorway as before.
+        """
         self._frame_index += 1
         height, width = frame.image.shape[:2]
 
         # Read once, not once per person: it is one fact about the doorway, and asking it
         # again mid-frame could give two tracks different answers about the same moment.
-        covered = self._covered() if self._covered is not None else False
+        if covered is None:
+            covered = self._covered() if self._covered is not None else False
 
         present = set()
         for person in people:
