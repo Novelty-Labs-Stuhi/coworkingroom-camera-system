@@ -274,15 +274,15 @@ discriminator = "approach"
     assert no_box is None          # the "approach" rule never asks about the box
 
 
-def test_the_preceded_rule_gets_the_box_read_without_gating_the_detector(
-    tmp_path: Path,
-) -> None:
-    """The rule needs to know when the box was covered, and needs the detector always awake.
+def test_the_preceded_rule_runs_behind_attention(tmp_path: Path) -> None:
+    """It needs the box read per frame *and* frames from before the covering *and* a sleeping
+    detector. Attention is the one thing that gives all three.
 
-    Those pull in opposite directions on every other camera: `Attention` reads the box *and*
-    decides when detection is worth waking. A rule asking "was this person visible before the
-    box was covered" cannot be gated on the box, or it would only ever be shown frames from
-    after the moment it is asking about. So this one gets the pixels and no gate.
+    An earlier attempt gave this rule its own per-frame box reading and no gate, on the grounds
+    that gating would hide the pre-covering frames. That was wrong twice over: Attention replays
+    exactly those frames out of its buffer, and running detection on every frame costs 200 ms
+    against a camera delivering eighteen a second -- which starved the frame reader and had the
+    watchdog kill the pipeline as stuck.
     """
     from stuhi_vision.assembly import _monitor
     from stuhi_vision.threshold import ThresholdMonitor
@@ -306,10 +306,10 @@ discriminator = "preceded"
     monitor, attention, watched_box = _monitor(camera, ZoneStore(tmp_path / "zones"))
 
     assert isinstance(monitor, ThresholdMonitor)
-    assert attention is None, "no gating: every frame must still reach the detector"
-    assert watched_box is not None, "but the box's pixels still have to be read every frame"
+    assert attention is not None, "the detector must stay asleep between passages"
+    assert watched_box is None, "Attention reads the box; nothing else should also be doing it"
     # And a redrawn box has to move the pixels being watched, not just the rule's geometry.
-    assert hasattr(watched_box, "use_zone")
+    assert hasattr(attention, "use_zone")
 
 
 def test_a_camera_can_set_its_own_motion_gate(tmp_path: Path) -> None:

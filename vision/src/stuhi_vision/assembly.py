@@ -525,13 +525,17 @@ def _monitor(
         return PassageMonitor(detector, attention.episode, watcher=report), attention, None
 
     if getattr(detector, "discriminator", None) == "preceded":
-        # This rule needs one fact the tracker cannot supply: whether the doorframe was covered
-        # on a given frame. So the box's pixels are read every frame and handed over as a plain
-        # question, while the detector keeps running on every frame -- which is the point, since
-        # the rule is about having seen somebody *before* the box was covered.
-        occlusion = Occlusion(zone=detector.zone, config=entry.coverage)
-        monitor = ThresholdMonitor(detector, report=report, covered=lambda: occlusion.busy)
-        return monitor, None, occlusion
+        # This rule needs two things at once: the doorframe's state on each frame, and frames
+        # from *before* it was covered. Attention supplies both -- it reads the box every frame
+        # and replays the approach out of its buffer -- and, crucially, it also keeps the
+        # detector asleep the rest of the time. Running it on every frame instead costs 200 ms
+        # a frame against a camera delivering eighteen, which starves the frame reader and gets
+        # the pipeline killed as stuck. That was measured, not guessed.
+        attention = Attention(Occlusion(zone=detector.zone, config=entry.coverage))
+        monitor = ThresholdMonitor(
+            detector, report=report, covered=lambda: attention.busy
+        )
+        return monitor, attention, None
 
     return ThresholdMonitor(detector, report=report), None, None
 
