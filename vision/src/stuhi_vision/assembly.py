@@ -28,7 +28,7 @@ from .ledger import Ledger
 from .merges import MergeLog
 from .notify import TelegramNotifier
 from .occlusion import Occlusion
-from .ordering import OrderingRule
+from .ordering import OrderingMonitor, OrderingRule
 from .passage import PassageMonitor
 from .pipeline import FrameObserver, Hooks, Pipeline
 from .presence import office_day
@@ -516,6 +516,27 @@ def _monitor(
         if passages is not None and hasattr(observation, "coverage"):
             passages.record(time.time(), entry.name, observation)
 
+    return _by_rule(entry, detector, report)
+
+
+def _by_rule(entry: CameraConfig, detector: ThresholdConfig, report):
+    """The monitor this camera's rule asks for, and the attention it needs.
+
+    Each returns the same triple -- monitor, attention, box-watcher -- so the caller wires them
+    identically whichever rule is in force.
+    """
+    if entry.rule == "ordering":
+        # Direction from where the coverage sits around a track: before it appeared, or after
+        # it was last seen. It needs whole episodes, so it takes Attention's -- the same pair
+        # the coverage rule uses, for the same reason. Verdicts with no direction are logged
+        # too, because "came in then went out again" is a real thing to know about.
+        attention = Attention(Occlusion(zone=detector.zone, config=entry.coverage))
+
+        def verdict(seen) -> None:
+            _log.info("%s [ordering] %s", entry.name, seen.readable)
+
+        return OrderingMonitor(detector, attention.episode, watcher=verdict), attention, None
+
     if entry.rule == "coverage":
         # Pixel change per vertical slice of the box decides the passage and its direction;
         # the tracker only has to confirm a person was on it. Attention runs those pixels
@@ -525,16 +546,11 @@ def _monitor(
         return PassageMonitor(detector, attention.episode, watcher=report), attention, None
 
     if getattr(detector, "discriminator", None) == "preceded":
-        # This rule needs two things at once: the doorframe's state on each frame, and frames
-        # from *before* it was covered. Attention supplies both -- it reads the box every frame
-        # and replays the approach out of its buffer -- and, crucially, it also keeps the
-        # detector asleep the rest of the time. Running it on every frame instead costs 200 ms
-        # a frame against a camera delivering eighteen, which starves the frame reader and gets
-        # the pipeline killed as stuck. That was measured, not guessed.
+        # Needs the box read per frame *and* frames from before the covering *and* a sleeping
+        # detector. Attention is the one thing that supplies all three; running detection on
+        # every frame instead starves the frame reader and gets the pipeline killed as stuck.
         attention = Attention(Occlusion(zone=detector.zone, config=entry.coverage))
-        monitor = ThresholdMonitor(
-            detector, report=report, covered=lambda: attention.busy
-        )
+        monitor = ThresholdMonitor(detector, report=report, covered=lambda: attention.busy)
         return monitor, attention, None
 
     return ThresholdMonitor(detector, report=report), None, None

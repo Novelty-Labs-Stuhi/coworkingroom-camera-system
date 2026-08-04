@@ -43,9 +43,9 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from .domain import Direction
+from .domain import Crossing, Direction
 from .threshold import ThresholdConfig, overlaps, relative
 
 _log = logging.getLogger(__name__)
@@ -111,6 +111,11 @@ class OrderingRule:
         # runs for weeks is a slow leak rather than a feature.
         self._episodes: deque[Episode] = deque(maxlen=64)
         self._frame = 0
+
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Judge against a different box from now on. A redrawn zone means the count is wrong
+        *now*, so waiting for a restart to apply it is most of the way to not being able to."""
+        self._config = replace(self._config, zone=zone)
 
     @property
     def frame(self) -> int:
@@ -192,3 +197,60 @@ class OrderingRule:
 
 def _opposite(direction: Direction) -> Direction:
     return Direction.OUT if direction is Direction.IN else Direction.IN
+
+
+class OrderingMonitor:
+    """The ordering rule as the doorway monitor, so its verdicts become counted crossings.
+
+    Deliberately thin. All the judgement is in :class:`OrderingRule`, which spent a day running
+    beside the live rule before this existed: on real traffic it resolved 57 of the doorframe's
+    activations against the live rule's 25, and found 33 exits against 17 -- exits being exactly
+    what the live rule loses, and the whole of the daily upward drift.
+
+    A verdict with no direction is not a crossing and is not one here either. The "came in then
+    went out again" case stays uncommitted for the reason the rule already gives: it is two
+    passages under one track id, and the Doorkeeper takes that track's session on the first and
+    drops the second as having none.
+    """
+
+    def __init__(
+        self,
+        config: ThresholdConfig,
+        episodes,
+        watcher=None,
+        window: int = WINDOW,
+        lost_after: int = LOST_AFTER,
+    ) -> None:
+        self._rule = OrderingRule(config, window=window, lost_after=lost_after)
+        # Non-None on exactly the frame an episode finishes, so nothing needs de-duplicating.
+        self._episodes = episodes
+        self._watcher = watcher
+
+    def update(self, people, frame, covered: bool | None = None) -> list[Crossing]:
+        """Feed one frame; return a crossing for each finished track that resolved.
+
+        ``covered`` is accepted and ignored, as on the coverage rule: this one reads whole
+        episodes rather than a single frame's state, and both monitors must answer the same
+        call or the pipeline has to know which it is holding.
+        """
+        height, width = frame.image.shape[:2]
+        finished = self._episodes()
+        episode = self._rule.span_of(finished.frames) if finished is not None else None
+
+        crossings = []
+        for verdict in self._rule.observe(people, width, height, episode):
+            if self._watcher is not None:
+                self._watcher(verdict)
+            if verdict.direction is not None:
+                crossings.append(
+                    Crossing(
+                        track_id=verdict.track_id,
+                        direction=verdict.direction,
+                        timestamp=frame.timestamp,
+                    )
+                )
+        return crossings
+
+    def use_zone(self, zone: tuple[float, float, float, float]) -> None:
+        """Judge against a redrawn box from now on, without a restart."""
+        self._rule.use_zone(zone)

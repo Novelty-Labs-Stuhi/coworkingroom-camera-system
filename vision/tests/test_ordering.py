@@ -224,3 +224,104 @@ def test_a_span_taken_from_the_rule_lands_on_the_right_side_of_a_track() -> None
 
     assert [v.direction for v in verdicts] == [Direction.OUT]
     assert verdicts[0].because == "covered after they were last seen"
+
+
+# --- the rule as a committing monitor ---------------------------------------------------------
+
+
+def _monitor_over(covered_at: int | None, seen_frames: range, frames: int = 40):
+    """Run a track through OrderingMonitor, with the coverage episode ending on a chosen frame."""
+    import numpy as np
+
+    from stuhi_vision.domain import Frame
+    from stuhi_vision.ordering import OrderingMonitor
+
+    width, height = 320, 240
+    episodes: list = []
+
+    class _Episode:
+        def __init__(self, n: int) -> None:
+            self.frames = n
+
+    monitor = OrderingMonitor(
+        ThresholdConfig(zone=(0.0, 0.0, 0.30, 1.0), passing_means=Direction.IN, min_height=0.35),
+        lambda: episodes.pop(0) if episodes else None,
+    )
+    crossings = []
+    for index in range(frames):
+        if index == covered_at:
+            episodes.append(_Episode(3))
+        people = [_person(1)] if index in seen_frames else []
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        crossings += monitor.update(people, Frame(timestamp=float(index), image=image))
+    return crossings
+
+
+def test_the_monitor_commits_a_crossing_when_the_covering_follows_the_person() -> None:
+    """Seen first, then the doorframe covers: they walked into it and through."""
+    crossings = _monitor_over(covered_at=14, seen_frames=range(2, 12))
+
+    assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_the_monitor_commits_the_other_direction_when_the_covering_comes_first() -> None:
+    """The covering, then they appear: they came through it into view.
+
+    This is the direction the live rule loses -- 33 exits against its 17 on a day of real
+    traffic -- and the reason this rule was promoted out of shadow at all.
+    """
+    crossings = _monitor_over(covered_at=4, seen_frames=range(8, 18))
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
+
+
+def test_a_track_that_never_reached_the_door_commits_nothing() -> None:
+    import numpy as np
+
+    from stuhi_vision.domain import Frame
+    from stuhi_vision.ordering import OrderingMonitor
+
+    monitor = OrderingMonitor(
+        ThresholdConfig(zone=(0.0, 0.0, 0.10, 1.0), passing_means=Direction.IN, min_height=0.35),
+        lambda: None,
+    )
+    crossings = []
+    for index in range(30):
+        people = [_person(1, left=0.60)] if index < 10 else []
+        image = np.zeros((240, 320, 3), dtype=np.uint8)
+        crossings += monitor.update(people, Frame(timestamp=float(index), image=image))
+
+    assert crossings == []
+
+
+def test_coming_in_and_going_out_again_commits_nothing_yet() -> None:
+    """Two passages under one track id. Named by the rule, deliberately not committed: the
+    Doorkeeper takes that track's session on the first and drops the second as having none."""
+    import numpy as np
+
+    from stuhi_vision.domain import Frame
+    from stuhi_vision.ordering import OrderingMonitor
+
+    class _Episode:
+        def __init__(self, n: int) -> None:
+            self.frames = n
+
+    episodes: list = []
+    seen = []
+    monitor = OrderingMonitor(
+        ThresholdConfig(zone=(0.0, 0.0, 0.30, 1.0), passing_means=Direction.IN, min_height=0.35),
+        lambda: episodes.pop(0) if episodes else None,
+        watcher=seen.append,
+    )
+    crossings = []
+    for index in range(40):
+        # Covered before they appeared, and again after they were last seen.
+        if index in (3, 22):
+            episodes.append(_Episode(3))
+        people = [_person(1)] if 8 <= index < 18 else []
+        image = np.zeros((240, 320, 3), dtype=np.uint8)
+        crossings += monitor.update(people, Frame(timestamp=float(index), image=image))
+
+    assert crossings == [], "one track cannot commit two crossings"
+    assert seen, "but the case is still named rather than silently dropped"
+    assert "then went" in seen[-1].because

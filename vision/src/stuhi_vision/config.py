@@ -30,7 +30,9 @@ Role = Literal["count", "identify"]
 #                 light gives the direction, and the tracker only has to confirm a person.
 #                 Chosen because coverage grows as somebody comes closer, where detection
 #                 weakens, and an order of events survives their outline changing shape.
-Rule = Literal["tracks", "coverage"]
+# "ordering" reads direction from where the doorframe's coverage sits around a track --
+# before it appeared, or after it was last seen. It ran a day in shadow first.
+Rule = Literal["tracks", "coverage", "ordering"]
 
 
 @dataclass(frozen=True, slots=True)
