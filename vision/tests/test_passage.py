@@ -213,3 +213,17 @@ def test_a_redrawn_box_is_judged_against_immediately() -> None:
     crossings = monitor.update([over_new], _frame(timestamp=2.0))
 
     assert crossings[0].track_id == 5
+
+
+def test_the_coverage_monitor_accepts_the_covered_argument_and_ignores_it() -> None:
+    """Both monitors must answer the same call, or the pipeline has to know which it holds.
+
+    It got that wrong once: the replay passes each frame's own coverage, and the first replayed
+    frame with somebody on it crashed the pipeline with an unexpected keyword argument. The
+    supervisor then restarted it into the same crash.
+    """
+    monitor = _monitor({})
+
+    # The keyword is accepted; this rule reads the doorframe itself and ignores the opinion.
+    assert monitor.update([], _frame(0.0), covered=True) == []
+    assert monitor.update([_person()], _frame(1.0), covered=False) == []

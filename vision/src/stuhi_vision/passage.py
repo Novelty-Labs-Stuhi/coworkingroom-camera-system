@@ -86,8 +86,21 @@ class PassageMonitor:
         """
         self._config = replace(self._config, zone=zone)
 
-    def update(self, people: Iterable[TrackedPerson], frame: Frame) -> list[Crossing]:
-        """Feed one frame's tracked people; return a crossing when an episode just ended."""
+    def update(
+        self,
+        people: Iterable[TrackedPerson],
+        frame: Frame,
+        covered: bool | None = None,
+    ) -> list[Crossing]:
+        """Feed one frame's tracked people; return a crossing when an episode just ended.
+
+        ``covered`` is accepted and ignored, so both monitors answer the same call. This rule
+        reads the doorframe itself, episode by episode, and has no use for a caller's opinion of
+        it; the rule that does need one is told per frame because its frames may be replayed
+        from before the covering. Taking the argument and doing nothing with it beats the
+        pipeline having to know which monitor it is holding -- which it got wrong once, and the
+        first replayed frame with somebody on it took the pipeline down.
+        """
         height, width = frame.image.shape[:2]
         self._note(people, width, height)
 
