@@ -47,14 +47,24 @@ from .occlusion import Coverage, Occlusion
 #
 # Generous, because keeping a frame is nearly free now that only the chunks actually asked for
 # cost anything. It bounds how far back a question may reach, not how much work is done.
-_PRE_ROLL_SECONDS = 12.0
+_PRE_ROLL_SECONDS = 6.0
 # ...and a frame ceiling, so a fast camera cannot turn those seconds into more memory than the
-# machine has. At 19 fps twelve seconds is about 230 frames; this leaves headroom above that.
-_MOST_FRAMES = 320
+# machine has. At 19 fps six seconds is about 115 frames.
+_MOST_FRAMES = 160
 # How many frames one chunk of the replay is. Each costs a detection, so this is the unit of
 # work: small enough that a close passage is cheap, large enough that a track has some frames
 # to form over.
-_CHUNK_FRAMES = 12
+_CHUNK_FRAMES = 8
+# The hard ceiling on what one waking may spend, in frames, however many chunks are asked for.
+#
+# This is the difference between adaptive and unbounded, and it was learned the expensive way:
+# with a 320-frame buffer and no cap, one awkward passage replayed the lot -- over a minute of
+# detection in a single call. The frame reader is on that thread, so it read nothing for that
+# minute, the heartbeat stopped, and the watchdog killed the pipeline as stuck. Twice.
+#
+# Twenty-four frames is about five seconds of detection: long enough to reach back through a
+# hesitant approach, short enough that the reader is never starved.
+_MOST_REPLAYED = 24
 # Kept looking at, after the box clears, so a track ends on its own rather than mid-stride.
 _LINGER_SECONDS = 0.7
 
@@ -82,11 +92,13 @@ class Attention:
         linger_seconds: float = _LINGER_SECONDS,
         most_frames: int = _MOST_FRAMES,
         chunk_frames: int = _CHUNK_FRAMES,
+        most_replayed: int = _MOST_REPLAYED,
     ) -> None:
         self._occlusion = occlusion
         self._pre_roll = max(pre_roll_seconds, 0.0)
         self._linger = max(linger_seconds, 0.0)
         self._chunk = max(chunk_frames, 1)
+        self._most_replayed = max(most_replayed, 1)
         self._recent: deque[Examined] = deque(maxlen=max(most_frames, 1))
         self._quiet_since: float | None = None
         self._was_busy = False
@@ -98,6 +110,8 @@ class Attention:
         self._examined_until: float | None = None
         # How far back the current wake has already reached. `earlier()` walks this backwards.
         self._replayed_from: float | None = None
+        # How many frames this wake has already spent, against the ceiling.
+        self._replayed = 0
         # When this wake happened. The pre-roll is measured from here rather than from the edge
         # of the last chunk, so reaching back repeatedly cannot walk off into the whole buffer:
         # the total a single question may cost is bounded, however many chunks it asks for.
@@ -118,6 +132,7 @@ class Attention:
             self._wake_at = frame.timestamp
             chunk = self._before(frame.timestamp)
             self._replayed_from = chunk[0].frame.timestamp if chunk else frame.timestamp
+            self._replayed = len(chunk)
             return self._hand_over([*chunk, here])
 
         if busy:
@@ -146,12 +161,16 @@ class Attention:
         more chunk, rather than the whole buffer being spent up front on the passages that never
         needed it.
         """
-        if self._replayed_from is None:
+        if self._replayed_from is None or self._replayed >= self._most_replayed:
+            # Out of budget. Reaching further would block the frame reader on this thread, and
+            # a pipeline that stops reading is a pipeline the watchdog kills.
             return []
-        chunk = self._before(self._replayed_from)
+        room = self._most_replayed - self._replayed
+        chunk = self._before(self._replayed_from)[-room:]
         if not chunk:
             return []
         self._replayed_from = chunk[0].frame.timestamp
+        self._replayed += len(chunk)
         # Deliberately not filtered through `_examined_until`: that watermark tracks how far
         # *forward* the models have got, and every frame here is behind it by construction.
         return chunk

@@ -251,3 +251,29 @@ def test_reaching_back_does_not_go_past_the_pre_roll() -> None:
     # A 0.35 s reach from a 3.0 s wake stops at 2.65, so only 2.7 is left to give.
     assert _stamps(attention.earlier()) == [2.7]
     assert attention.earlier() == []
+
+
+def test_one_waking_cannot_spend_more_than_its_budget() -> None:
+    """The fault that took the pipeline down twice, now a rule rather than a hope.
+
+    Unbounded, an awkward passage replayed the whole buffer -- over a minute of detection in
+    one call. The frame reader is on that thread, so it read nothing for that minute, the
+    heartbeat stopped, and the watchdog killed the pipeline as stuck.
+    """
+    door = Doorframe()
+    attention = Attention(
+        door, pre_roll_seconds=60.0, linger_seconds=0.0, most_frames=200,
+        chunk_frames=4, most_replayed=10,
+    )
+    for index in range(100):
+        attention.examine(_frame(index))
+
+    door.busy = True
+    spent = len(attention.examine(_frame(100))) - 1     # less the waking frame itself
+    while True:
+        more = attention.earlier()
+        if not more:
+            break
+        spent += len(more)
+
+    assert spent == 10, "the ceiling is what one waking may spend, however many chunks it asks"
