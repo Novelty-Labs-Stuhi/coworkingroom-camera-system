@@ -506,11 +506,18 @@ def test_never_being_seen_off_the_doorframe_is_refused() -> None:
     assert _walk(monitor, door, [(0.05, True), (0.10, True), (0.05, True)]) == []
 
 
-def test_both_in_the_same_frame_is_refused_rather_than_guessed() -> None:
-    """One frame is not an order. Inventing one would put an unseen crossing on the record."""
+def test_covered_in_the_same_frame_the_person_appeared_is_coming_out() -> None:
+    """"Covered at the moment they appeared" and "covered before" mean the same thing.
+
+    At this frame rate somebody stepping out is detected and covers the frame within a single
+    frame, so refusing the same-frame case would throw away the commonest exit there is. The
+    frame was already going when they showed up, and that is what coming out looks like.
+    """
     monitor, door = _preceded()
 
-    assert _walk(monitor, door, [(0.70, True), (0.60, True)]) == []
+    crossings = _walk(monitor, door, [(0.70, True), (0.60, True)])
+
+    assert [c.direction for c in crossings] == [Direction.OUT]
 
 
 def test_passing_means_inverts_the_pair_for_the_other_camera() -> None:
@@ -550,3 +557,28 @@ def test_the_slice_order_being_unreadable_does_not_stop_this_rule() -> None:
     crossings = _walk(monitor, door, [(0.80, False), (0.02, True)])
 
     assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_the_pixels_decide_the_passage_not_a_box_overlapping_the_zone() -> None:
+    """The case the doorframe exists to catch, and the one a box-overlap test throws away.
+
+    Somebody going through is often half behind the door, or beside the frame, while the frame's
+    pixels plainly change. Their detected box never overlaps the zone. Under a rule that asks
+    "did the person's box reach the rectangle" that crossing is refused; under this one the
+    covering is the event and the box is only asked when it happened.
+    """
+    monitor, door = _preceded()
+
+    # The person stays well clear of the zone (which ends at 0.30) for their whole track, and
+    # the doorframe covers anyway -- the door itself, or a shoulder outside the box.
+    crossings = _walk(monitor, door, [(0.80, False), (0.70, False), (0.60, True), (0.55, True)])
+
+    assert [c.direction for c in crossings] == [Direction.IN]
+
+
+def test_pixels_that_never_change_are_not_a_passage_however_close_somebody_walks() -> None:
+    """Background traffic: the room behind the door is not the door."""
+    monitor, door = _preceded()
+
+    # Walks right across the zone, but the doorframe's pixels never register a covering.
+    assert _walk(monitor, door, [(0.80, False), (0.20, False), (0.02, False)]) == []

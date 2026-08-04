@@ -253,9 +253,28 @@ class ThresholdMonitor:
                 )
         return crossings
 
+    def _worth_judging(self, track: _Track) -> bool:
+        """Whether this track is a candidate for a passage at all.
+
+        Two different questions, and the difference is the point of the doorframe:
+
+        * for **preceded**, the doorframe's *pixels* changing is the passage. Somebody going
+          through occludes the frame, and that is the event -- so a covering is required and a
+          person's own box is never asked to overlap anything. It is consulted only for the
+          order of things. Requiring the box to reach the zone would throw away exactly the
+          crossings the doorframe exists to catch: the person half behind the door, or beside
+          the frame, while the pixels plainly change.
+        * every other rule asks whether the *person's box* reached the zone, which is a
+          weaker question -- it is what lets somebody crossing the room behind the door look
+          like a passage.
+        """
+        if self._config.discriminator == "preceded":
+            return track.covered_at is not None
+        return track.touched_zone and track.tallest >= self._config.min_height
+
     def _decide(self, track: _Track, width: int, height: int) -> Direction | None:
         """A finished track: did it pass through the doorway, and which way?"""
-        if not track.touched_zone or track.tallest < self._config.min_height:
+        if not self._worth_judging(track):
             return None  # background traffic, or never close enough to be at the door
 
         first = relative(track.first, width, height)
@@ -383,9 +402,12 @@ class ThresholdMonitor:
             return None
         if track.outside_at < track.covered_at:
             return self._config.passing_means
-        if track.outside_at > track.covered_at:
-            return _opposite(self._config.passing_means)
-        return None
+        # Covered *before* the person was seen, or covered in the same frame they appeared in:
+        # both mean the frame was already going when they showed up, which is what coming out
+        # looks like. The same-frame case is deliberately not a refusal -- somebody stepping out
+        # is detected and covers the frame within one frame at this frame rate, and refusing it
+        # would throw away the commonest exit there is.
+        return _opposite(self._config.passing_means)
 
     def _by_size(self, first: _Relative, last: _Relative) -> Direction | None:
         """Grew towards the lens, or shrank away from it?
