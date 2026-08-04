@@ -53,6 +53,10 @@ Discriminator = Literal["edge", "travel", "approach", "covering", "preceded"]
 # is also why a track must overlap the zone before the coverage is credited to it.
 Covered = Callable[[], bool]
 
+# How close to the picture's edge counts as being against it. Tight: this is asking whether the
+# box ran out of picture, not whether the person was near the side of the room.
+_BORDER_MARGIN = 0.02
+
 
 @dataclass(frozen=True, slots=True)
 class ThresholdConfig:
@@ -105,6 +109,14 @@ class Touch:
     # ordering is on the record beside it.
     outside_at: int | None = None
     covered_at: int | None = None
+    # When this track began and ended, in wall time. The doorframe rule never needed them, but
+    # the room camera's testimony is a claim about a *moment*, and a frame index cannot be
+    # compared against a crossing recorded on the other camera's clock.
+    began_at: float = 0.0
+    ended_at: float = 0.0
+    # The track's last box was against a frame border -- they walked out of view rather than
+    # stopping in it. Clipped by the edge counts: that is what walking past a lens looks like.
+    left_frame: bool = False
 
     @property
     def order(self) -> str:
@@ -155,6 +167,9 @@ class _Track:
     # a pair of flags cannot answer it.
     outside_at: int | None = None
     covered_at: int | None = None
+    # Wall time, for testimony that has to line up with the other camera's clock.
+    began_at: float = 0.0
+    ended_at: float = 0.0
 
 
 class ThresholdMonitor:
@@ -215,12 +230,17 @@ class ThresholdMonitor:
         present = set()
         for person in people:
             present.add(person.track_id)
-            self._observe(person, width, height, covered)
+            self._observe(person, width, height, covered, frame.timestamp)
 
         return self._resolve_finished(present, frame)
 
     def _observe(
-        self, person: TrackedPerson, width: int, height: int, covered: bool = False
+        self,
+        person: TrackedPerson,
+        width: int,
+        height: int,
+        covered: bool = False,
+        at: float = 0.0,
     ) -> None:
         box = person.box
         shape = relative(box, width, height)
@@ -229,12 +249,17 @@ class ThresholdMonitor:
         track = self._tracks.get(person.track_id)
         if track is None:
             self._tracks[person.track_id] = track = _Track(
-                first=box, last=box, last_seen=self._frame_index, covered_first=covered
+                first=box,
+                last=box,
+                last_seen=self._frame_index,
+                covered_first=covered,
+                began_at=at,
             )
         else:
             track.last = box
             track.last_seen = self._frame_index
             track.frames += 1
+        track.ended_at = at
 
         track.covered_last = covered
         track.tallest = max(track.tallest, shape.height)
@@ -321,6 +346,9 @@ class ThresholdMonitor:
                 covered_last=track.covered_last,
                 outside_at=track.outside_at,
                 covered_at=track.covered_at,
+                began_at=track.began_at,
+                ended_at=track.ended_at,
+                left_frame=_at_border(last),
             )
         )
 
@@ -474,6 +502,21 @@ def _at_edge(box: _Relative, edge: Edge, margin: float) -> bool:
     if edge == "top":
         return box.top <= margin
     return box.bottom >= 1.0 - margin
+
+
+def _at_border(box: _Relative, margin: float = _BORDER_MARGIN) -> bool:
+    """Against any edge of the picture -- they walked out of view rather than stopping in it.
+
+    Any edge, not a chosen one: this says "gone", and which side they left by is not the
+    question. Clipped by the border counts, because that is what walking past a lens looks
+    like -- the box stops where the picture does.
+    """
+    return (
+        box.left <= margin
+        or box.top <= margin
+        or box.right >= 1.0 - margin
+        or box.bottom >= 1.0 - margin
+    )
 
 
 def _leading(box: _Relative, edge: Edge) -> float:

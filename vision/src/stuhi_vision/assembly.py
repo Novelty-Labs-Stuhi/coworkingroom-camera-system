@@ -17,6 +17,7 @@ from .attention import Attention
 from .clips import ClipRecorder
 from .config import CameraConfig, Config
 from .continuity import RESET, DayBoundary, end_of_day, open_visits, partition, start_of_day
+from .corroboration import Corroboration
 from .domain import Sighting
 from .doorway import DoorwayMonitor
 from .gating import MotionGate
@@ -91,6 +92,10 @@ class _Shared:
     # Their faces, kept apart from the named gallery so recognising a returning stranger
     # cannot degrade recognition of somebody with a name.
     strangers: Strangers
+    # What the room camera saw, waiting for the doorway camera to ask about it: somebody
+    # appearing in the room confirms an entry, somebody walking at the lens and out of frame
+    # confirms an exit. Shared, because it is a message from one camera to the other.
+    corroboration: Corroboration
 
 
 @dataclass(slots=True)
@@ -273,6 +278,7 @@ def build(config: Config, announce, observer: FrameObserver | None = None) -> Ap
         heartbeats=config.paths.review_dir.parent / "heartbeat",
         provisional=provisional,
         strangers=strangers,
+        corroboration=Corroboration(),
     )
     cameras = [_build_camera(entry, config, shared, announce, observer) for entry in config.cameras]
     # The UI is started last: it serves frames and drift readings that only exist once the
@@ -344,7 +350,9 @@ def _build_camera(
         clear_frames=performance.clip_clear_frames,
     )
 
-    monitor, attention, doorframe = _monitor(entry, shared.zones, shared.passages)
+    monitor, attention, doorframe = _monitor(
+        entry, shared.zones, shared.passages, shared.corroboration
+    )
     _follow_zone(entry, shared.zones, monitor, attention, doorframe)
     pipeline = Pipeline(
         source=source,
@@ -399,6 +407,8 @@ def _committer(entry: CameraConfig, sessions: SessionManager, shared: _Shared, m
         # person coming back is matched to it rather than becoming somebody else again, and
         # the labelling page can tell an invented name from one a human chose.
         enrolment=Enrolment(shared.strangers, shared.gallery_dir, shared.provisional),
+        # The room camera's second opinion on each crossing this one counts.
+        corroboration=getattr(shared, "corroboration", None),
     )
 
 
@@ -449,7 +459,33 @@ def _motion(entry: CameraConfig, performance) -> float:
     return entry.motion_min_fraction
 
 
-def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | None = None):
+def _testify(entry: CameraConfig, corroboration: Corroboration | None, observation) -> None:
+    """File what the room camera saw, for the doorway camera to ask about later.
+
+    Only the identifying camera testifies: the doorway camera is the one being corroborated, and
+    a witness that is also the accused is no witness. Two things are worth filing, and they are
+    the two halves the doorway camera cannot see:
+
+    * **somebody appeared** in the room's view at all -- which is what walking in looks like
+      from in here, whatever they did afterwards;
+    * **somebody walked at the lens and out of frame** -- growing, then gone -- which is what
+      walking out looks like. Growth alone is somebody leaning towards a desk; leaving the frame
+      alone is somebody stepping sideways past the edge. Together they are a departure.
+    """
+    if corroboration is None or entry.role != "identify":
+        return
+    corroboration.appeared(at=observation.began_at)
+    grew = getattr(observation, "grew", 0.0)
+    if getattr(observation, "left_frame", False) and grew > 0:
+        corroboration.left_frame(at=observation.ended_at, grew=grew)
+
+
+def _monitor(
+    entry: CameraConfig,
+    zones: ZoneStore,
+    passages: PassageStore | None = None,
+    corroboration: Corroboration | None = None,
+):
     """The passage detector this camera configured, and the attention it needs, if any.
 
     A zone drawn in the UI wins over the one in the config: it was drawn by somebody looking
@@ -474,6 +510,7 @@ def _monitor(entry: CameraConfig, zones: ZoneStore, passages: PassageStore | Non
 
     def report(observation) -> None:
         _log.info("%s %s", entry.name, observation.readable)
+        _testify(entry, corroboration, observation)
         # Filed as well as logged: the log is rotated within hours, and a refused passage is
         # exactly the evidence needed to explain a count that looks wrong.
         if passages is not None and hasattr(observation, "coverage"):

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .corroboration import Corroboration
 from .domain import Crossing, Direction, Outcome, Sighting
 from .identity import Decision
 from .ledger import Ledger
@@ -58,12 +59,18 @@ class Doorkeeper:
         camera: str = "",
         witness: LeavingWitness | None = None,
         enrolment: Enrolment | None = None,
+        corroboration: Corroboration | None = None,
     ) -> None:
         self._sessions = sessions
         self._ledger = ledger
         self._min_track_age = min_track_age
         self._camera = camera
         self._witness = witness
+        # The room camera's second opinion on whether this passage really happened. Asked, not
+        # obeyed: a crossing it cannot confirm is recorded as unconfirmed, never refused --
+        # refusing would trade a miss for a false count, and a missed exit leaves somebody in
+        # the room for ever.
+        self._corroboration = corroboration
         # Where a new identity's face goes. Without it an unrecognised person is unrecognisable
         # again next time, so they can never be matched on the way out.
         # Where an unrecognised arrival's identity is written. Without it they are
@@ -83,11 +90,28 @@ class Doorkeeper:
             return None
 
         decision = session.identity.decide()
+        if decision.outcome is Outcome.UNIDENTIFIED:
+            # Counted, with no face ever seen to say who it was. Not the same as UNKNOWN,
+            # which did see one: that face is enrolled and matches the person next time.
+            # This is the case with nothing behind it, and its two consequences are quite
+            # different and both invisible in the record afterwards. On the way in an
+            # identity is invented with no face to enrol, so nothing can recognise or match
+            # it ever again and it sits in the room until the day boundary clears it. On the
+            # way out the name comes from whoever the room guesses, which also leaves the
+            # person guessed at still inside. Neither reads as an error later, so this line
+            # is the only measure of how much of the count rests on no evidence at all.
+            _log.info(
+                "%s counting a crossing with no face evidence: track %s going %s",
+                self._camera,
+                crossing.track_id,
+                crossing.direction.value,
+            )
         introduced = False
         if crossing.direction is Direction.IN:
             name, introduced = self._enter(session, decision, crossing.timestamp)
         else:
             name = self._exit(session, decision, crossing.timestamp)
+        self._corroborate(crossing, name)
 
         return Sighting(
             timestamp=crossing.timestamp,
@@ -98,6 +122,36 @@ class Doorkeeper:
             introduced=introduced,
             face_embedding=session.face_embedding,
             face_crop=session.face_crop,
+        )
+
+    def _corroborate(self, crossing: Crossing, name: str | None) -> None:
+        """Ask the room camera whether it saw the other half of this, and say either way.
+
+        An entry should be followed by somebody appearing in the room; an exit preceded by
+        somebody walking at that lens and out of its frame. Logged rather than enforced: this
+        is the measure of how much of the count has a second witness, and an unconfirmed
+        crossing is the one to look at when the numbers read wrong.
+        """
+        if self._corroboration is None:
+            return
+        entering = crossing.direction is Direction.IN
+        seen = (
+            self._corroboration.confirms_entry(crossing.timestamp)
+            if entering
+            else self._corroboration.confirms_exit(crossing.timestamp)
+        )
+        _log.info(
+            "%s %s %s going %s%s",
+            self._camera,
+            "CONFIRMED" if seen else "UNCONFIRMED",
+            name or "somebody",
+            crossing.direction.value,
+            (
+                f": the room camera saw them {'appear' if entering else 'leave frame'} "
+                f"{abs(seen.at - crossing.timestamp):.1f}s away"
+                if seen
+                else ": the room camera saw nothing to match it"
+            ),
         )
 
     def _enter(

@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from stuhi_vision.assembly import _publisher
+from stuhi_vision.corroboration import Corroboration
 from stuhi_vision.domain import Direction, Outcome, Sighting
 from stuhi_vision.publishing import Publication
 from stuhi_vision.recognition.gallery import FaceGallery
@@ -92,6 +93,7 @@ def test_the_ui_is_fed_frames_by_the_reader(tmp_path) -> None:
         heartbeats=tmp_path / "heartbeat",
         provisional=None,
         strangers=None,
+        corroboration=Corroboration(),
     )
     image = np.zeros((4, 4, 3), dtype=np.uint8)
     camera = [Frame(timestamp=float(i), image=image) for i in range(3)]
